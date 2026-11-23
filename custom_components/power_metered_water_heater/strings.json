@@ -2,18 +2,16 @@
   "config": {
     "step": {
       "user": {
-        "title": "Water heater plug",
-        "description": "Pick the smart plug that powers a storage water heater. The new entities are added to the plug's device.",
+        "title": "Water heater switch",
+        "description": "Pick the switch or smart plug that powers a storage water heater and reports its power.",
         "data": {
           "switch_entity": "Switch",
           "power_entity": "Power sensor",
-          "energy_entity": "Energy sensor",
           "tank_volume": "Tank volume"
         },
         "data_description": {
-          "switch_entity": "The plug's on/off switch. It will be controlled through the new water heater entity.",
-          "power_entity": "The plug's power reading in W. This is the model's main input.",
-          "energy_entity": "Optional. Only used to check that the model's energy adds up.",
+          "switch_entity": "The on/off switch that powers the heater. It will be controlled through the new water heater entity.",
+          "power_entity": "The power reading in W of that switch. This is the model's main input.",
           "tank_volume": "From the heater's label, e.g. 35 L for a Joven JSH35."
         }
       },
@@ -33,13 +31,10 @@
           "shower_flow": "Litres per minute at the shower head. If you have two heads, use their average.",
           "shower_temperature": "Temperature of the mixed water you shower with.",
           "cold_water_temperature": "Temperature of the cold mains water.",
-          "learn_from_history": "Replay the recorder's history of the plug to learn the heater and start with the current tank state.",
+          "learn_from_history": "Replay the recorder's history of the switch to learn the heater and start with the current tank state.",
           "import_statistics": "Write hourly statistics for the replayed period, so water and energy charts start before today."
         }
       }
-    },
-    "error": {
-      "no_device": "This switch is not part of a device. Pick a plug's switch entity."
     },
     "abort": {
       "already_configured": "This switch is already set up."
@@ -51,7 +46,6 @@
         "title": "Power Metered Water Heater options",
         "data": {
           "power_entity": "Power sensor",
-          "energy_entity": "Energy sensor",
           "tank_volume": "Tank volume",
           "shower_threshold": "Shower threshold",
           "room_temperature": "Room temperature around the tank"
@@ -65,37 +59,79 @@
   },
   "entity": {
     "binary_sensor": {
-      "hot_water_ready": { "name": "Hot Water Ready" }
+      "hot_water_ready": {
+        "name": "Hot Water Ready"
+      }
     },
     "event": {
       "shower": {
         "name": "Shower",
         "state_attributes": {
-          "event_type": { "state": { "shower": "Shower" } }
+          "event_type": {
+            "state": {
+              "shower": "Shower"
+            }
+          }
         }
       }
     },
     "number": {
-      "thermostat_setting": { "name": "Thermostat Setting" },
-      "shower_flow": { "name": "Shower Flow" },
-      "shower_temperature": { "name": "Shower Temperature" },
-      "cold_water_temperature": { "name": "Cold Water Temperature" }
+      "thermostat_setting": {
+        "name": "Thermostat Setting"
+      },
+      "shower_flow": {
+        "name": "Shower Flow"
+      },
+      "shower_temperature": {
+        "name": "Shower Temperature"
+      },
+      "cold_water_temperature": {
+        "name": "Cold Water Temperature"
+      }
     },
     "sensor": {
-      "tank_temperature": { "name": "Tank Temperature" },
-      "hot_water_remaining": { "name": "Hot Water Remaining" },
-      "shower_minutes_left": { "name": "Shower Minutes Left" },
-      "total_water": { "name": "Total Water" },
-      "shower_water": { "name": "Shower Water" },
-      "other_water": { "name": "Other Water" },
-      "shower_energy": { "name": "Shower Energy" },
-      "other_energy": { "name": "Other Energy" },
-      "heat_loss_energy": { "name": "Heat Loss Energy" },
-      "shower_count": { "name": "Shower Count" },
-      "last_shower_water": { "name": "Last Shower Water" },
-      "last_shower_duration": { "name": "Last Shower Duration" },
-      "heat_loss_rate": { "name": "Heat Loss Rate" },
-      "last_correction": { "name": "Last Correction" }
+      "tank_temperature": {
+        "name": "Tank Temperature"
+      },
+      "hot_water_remaining": {
+        "name": "Hot Water Remaining"
+      },
+      "shower_minutes_left": {
+        "name": "Shower Minutes Left"
+      },
+      "total_water": {
+        "name": "Total Water"
+      },
+      "shower_water": {
+        "name": "Shower Water"
+      },
+      "other_water": {
+        "name": "Other Water"
+      },
+      "shower_energy": {
+        "name": "Shower Energy"
+      },
+      "other_energy": {
+        "name": "Other Energy"
+      },
+      "heat_loss_energy": {
+        "name": "Heat Loss Energy"
+      },
+      "shower_count": {
+        "name": "Shower Count"
+      },
+      "last_shower_water": {
+        "name": "Last Shower Water"
+      },
+      "last_shower_duration": {
+        "name": "Last Shower Duration"
+      },
+      "heat_loss_rate": {
+        "name": "Heat Loss Rate"
+      },
+      "last_correction": {
+        "name": "Last Correction"
+      }
     }
   }
 }

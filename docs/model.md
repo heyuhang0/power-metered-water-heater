@@ -6,7 +6,7 @@ which has no Home Assistant imports and is replayed offline by the tests.
 ## Inputs
 
 - Switch state (on/off).
-- Plug power in W. Above 500 W the element is heating.
+- Power of the switch in W. Above 500 W the element is heating.
 
 ## State
 
@@ -49,7 +49,7 @@ Special cases:
 
 ## Learning
 
-- Element power: running average of the plug's power while heating.
+- Element power: running average of the power while heating.
 - Thermostat band and loss when full: from quiet cycles (switch on, ≥ 3 h, a single
   band-sized reheat, no draw).
 - Typical shower length: running average of detected showers.
@@ -63,7 +63,7 @@ Special cases:
 | Loss when full | 51–78 W from clean idle gaps; learned 71 W |
 | Cool-down while off | ≈ 50–55 W average over 6–26 h |
 | Shower draw | 5.3 kW at 9.5 L/min, 38 °C, 30 °C cold |
-| Energy balance | water + loss = 24.21 kWh vs plug 24.21 kWh |
+| Energy balance | water + loss = 24.21 kWh vs the switch's energy meter 24.21 kWh |
 | Timed shower check | user timed 12–13 min; model 12.6 min (not fitted) |
 
 The thermostat setting was hidden on this heater. The data only bounds it to at

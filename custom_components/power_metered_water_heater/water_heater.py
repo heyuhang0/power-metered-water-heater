@@ -1,4 +1,4 @@
-"""The water heater: controls the plug's switch, shows the estimated tank temperature."""
+"""The water heater: turns the switch on and off, shows the estimated tank temperature."""
 from __future__ import annotations
 
 from typing import Any

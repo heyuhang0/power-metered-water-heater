@@ -172,13 +172,19 @@ async def test_settings_number_changes_model(recorder_mock, our_integration, has
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
-async def test_rejects_switch_without_device(recorder_mock, our_integration, hass: HomeAssistant) -> None:
-    hass.states.async_set("switch.loose", STATE_OFF)
+async def test_switch_without_device_is_named_after_the_switch(recorder_mock, our_integration, hass: HomeAssistant) -> None:
+    hass.states.async_set("switch.loose", STATE_OFF, {"friendly_name": "Loose Heater"})
     hass.states.async_set(POWER, "0")
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {
         "switch_entity": "switch.loose", "power_entity": POWER, "tank_volume": 35})
-    assert r["errors"] == {"switch_entity": "no_device"}
+    assert r["step_id"] == "settings"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {
+        "thermostat": 65, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
+        "learn_from_history": False, "import_statistics": False})
+    assert r["type"] is FlowResultType.CREATE_ENTRY and r["title"] == "Loose Heater"
+    await hass.async_block_till_done()
+    assert hass.states.get("water_heater.loose_heater") is not None
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
@@ -199,3 +205,16 @@ async def test_follows_switch_rename(recorder_mock, our_integration, hass: HomeA
     await hass.services.async_call("water_heater", "turn_off",
                                    {"entity_id": "water_heater.master_bath_water_heater"}, blocking=True)
     assert calls[0].data["entity_id"] == "switch.master_bath_water_heater_switch"
+
+
+@pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
+async def test_migrates_v1_entry_without_energy_setting(recorder_mock, our_integration, hass: HomeAssistant) -> None:
+    await _plug(hass)
+    old = MockConfigEntry(domain=DOMAIN, version=1, title="Water Heater", data={
+        "switch_entity": SWITCH, "power_entity": POWER, "energy_entity": "sensor.x_energy", "tank_volume": 35,
+        "thermostat": 65, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
+        "learn_from_history": False, "import_statistics": False})
+    old.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(old.entry_id)
+    await hass.async_block_till_done()
+    assert old.version == 2 and "energy_entity" not in old.data

@@ -4,8 +4,8 @@ from __future__ import annotations
 DOMAIN = "power_metered_water_heater"
 
 CONF_SWITCH = "switch_entity"
+LEGACY_CONF_ENERGY = "energy_entity"   # removed in v0.1.3 (it was never used)
 CONF_POWER = "power_entity"
-CONF_ENERGY = "energy_entity"
 CONF_TANK_VOLUME = "tank_volume"
 CONF_THERMOSTAT = "thermostat"
 CONF_SHOWER_FLOW = "shower_flow"

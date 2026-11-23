@@ -1,4 +1,4 @@
-"""Storage water heater model driven only by a smart plug's switch and power.
+"""Storage water heater model driven only by a metering switch's on/off state and power.
 
 Pure Python (no Home Assistant imports) so it can be replayed and tested offline.
 
@@ -8,7 +8,7 @@ The tank's *heat deficit* D (kWh below full) is tracked continuously:
 
 * D grows with standby heat loss (Newton cooling towards room temperature)
   and with hot water use.
-* D shrinks with the heater energy the plug measures.
+* D shrinks with the heater energy the switch measures.
 * When the thermostat stops a reheat while the switch is still on, the tank is
   full: D = 0. These *anchors* make the accounting exact. Between two anchors,
   water energy = heater energy - modelled heat loss.
@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 WATER_KJ_PER_L_K = 4.186
-HEATING_W = 500.0            # plug power above this = element on
+HEATING_W = 500.0            # power above this = element on
 END_CONFIRM_S = 30.0         # wait this long after a power drop before deciding why it stopped
 STEP_S = 60.0                # integration step
 BAND_MARGIN_KWH = 0.03       # slack on the thermostat band before counting a draw

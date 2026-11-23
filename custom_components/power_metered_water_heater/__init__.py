@@ -1,4 +1,4 @@
-"""Power Metered Water Heater: a storage water heater on a power-metering smart plug."""
+"""Power Metered Water Heater: a storage water heater on a power-metering switch or smart plug."""
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device import async_entity_id_to_device_id
 from homeassistant.helpers.helper_integration import async_handle_source_entity_changes
 
-from .const import CONF_POWER, CONF_SWITCH
+from .const import CONF_POWER, CONF_SWITCH, LEGACY_CONF_ENERGY
 from .runtime import HeaterRuntime
 
 PLATFORMS = [Platform.WATER_HEATER, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.EVENT, Platform.NUMBER]
@@ -27,7 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bo
 
 
 def _track_source_renames(hass: HomeAssistant, entry: HeaterConfigEntry) -> None:
-    """Follow the plug's switch and power sensor if their entity IDs change."""
+    """Follow the switch and power sensor if their entity IDs change."""
     cfg = {**entry.data, **entry.options}
     for key in (CONF_SWITCH, CONF_POWER):
         source = cfg[key]
@@ -45,6 +45,15 @@ def _track_source_renames(hass: HomeAssistant, entry: HeaterConfigEntry) -> None
             source_device_id=async_entity_id_to_device_id(hass, source),
             source_entity_id_or_uuid=source,
         ))
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bool:
+    """v1 -> v2: drop the unused energy sensor setting."""
+    if entry.version == 1:
+        data = {k: v for k, v in entry.data.items() if k != LEGACY_CONF_ENERGY}
+        options = {k: v for k, v in entry.options.items() if k != LEGACY_CONF_ENERGY}
+        hass.config_entries.async_update_entry(entry, data=data, options=options, version=2)
+    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bool:

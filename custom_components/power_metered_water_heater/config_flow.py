@@ -1,4 +1,4 @@
-"""Setup: step 1 picks the plug's entities, step 2 the starting settings."""
+"""Setup: step 1 picks the switch and its power sensor, step 2 the starting settings."""
 from __future__ import annotations
 
 from typing import Any
@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import device as device_helper, entity_registry as er, selector
 
 from .const import (
-    CONF_COLD_TEMP, CONF_ENERGY, CONF_IMPORT_STATISTICS, CONF_LEARN_HISTORY, CONF_POWER, CONF_ROOM_TEMP,
+    CONF_COLD_TEMP, CONF_IMPORT_STATISTICS, CONF_LEARN_HISTORY, CONF_POWER, CONF_ROOM_TEMP,
     CONF_SHOWER_FLOW, CONF_SHOWER_TEMP, CONF_SHOWER_THRESHOLD, CONF_SWITCH, CONF_TANK_VOLUME,
     CONF_THERMOSTAT, DEFAULT_COLD_TEMP, DEFAULT_ROOM_TEMP, DEFAULT_SHOWER_FLOW, DEFAULT_SHOWER_TEMP,
     DEFAULT_SHOWER_THRESHOLD, DEFAULT_TANK_VOLUME, DEFAULT_THERMOSTAT, DOMAIN,
@@ -27,14 +27,9 @@ def _power_sel() -> selector.EntitySelector:
     return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.POWER))
 
 
-def _energy_sel() -> selector.EntitySelector:
-    return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.ENERGY))
-
-
 SOURCES = vol.Schema({
     vol.Required(CONF_SWITCH): selector.EntitySelector(selector.EntitySelectorConfig(domain="switch")),
     vol.Required(CONF_POWER): _power_sel(),
-    vol.Optional(CONF_ENERGY): _energy_sel(),
     vol.Required(CONF_TANK_VOLUME, default=DEFAULT_TANK_VOLUME): _num(5, 500, 1, "L"),
 })
 
@@ -49,27 +44,25 @@ SETTINGS = vol.Schema({
 
 
 class PowerMeteredWaterHeaterFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         self._sources: dict[str, Any] = {}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
         if user_input is not None:
             switch = user_input[CONF_SWITCH]
             entry = er.async_get(self.hass).async_get(switch)
+            await self.async_set_unique_id(entry.id if entry else switch)
+            self._abort_if_unique_id_configured()
+            self._sources = user_input
+            # the new device is named after the switch's device (or the switch itself)
             device = device_helper.async_entity_id_to_device(self.hass, switch)
-            if device is None:
-                errors[CONF_SWITCH] = "no_device"
-            else:
-                await self.async_set_unique_id(entry.id if entry else switch)
-                self._abort_if_unique_id_configured()
-                self._sources = user_input
-                self._title = device.name_by_user or device.name or switch
-                return await self.async_step_settings()
-        return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(SOURCES, user_input),
-                                    errors=errors)
+            state = self.hass.states.get(switch)
+            self._title = ((device and (device.name_by_user or device.name))
+                           or (state and state.name) or switch)
+            return await self.async_step_settings()
+        return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(SOURCES, user_input))
 
     async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -90,8 +83,7 @@ class PowerMeteredWaterHeaterOptions(OptionsFlow):
         cur = {**self.config_entry.data, **self.config_entry.options}
         schema = vol.Schema({
             vol.Required(CONF_POWER): _power_sel(),
-            vol.Optional(CONF_ENERGY): _energy_sel(),
-            vol.Required(CONF_TANK_VOLUME): _num(5, 500, 1, "L"),
+                    vol.Required(CONF_TANK_VOLUME): _num(5, 500, 1, "L"),
             vol.Required(CONF_SHOWER_THRESHOLD, default=DEFAULT_SHOWER_THRESHOLD): _num(0.1, 2, 0.05, "kWh"),
             vol.Required(CONF_ROOM_TEMP, default=DEFAULT_ROOM_TEMP): _num(5, 45, 0.5, "°C"),
         })

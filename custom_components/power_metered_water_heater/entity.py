@@ -1,4 +1,4 @@
-"""Base entity: all entities sit on the integration's own device, linked to the plug."""
+"""Base entity: all entities sit on the integration's own device, linked to the switch's device."""
 from __future__ import annotations
 
 from homeassistant.helpers import area_registry as ar
@@ -10,17 +10,17 @@ from .runtime import HeaterRuntime
 
 
 def heater_device_info(runtime: HeaterRuntime) -> DeviceInfo:
-    """The water heater device: named after the entry, in the plug's area, connected via the plug."""
+    """The water heater device: named after the entry, in the switch's area, connected via the switch's device."""
     info: dict = {
         "identifiers": {(DOMAIN, runtime.entry.entry_id)},
         "name": runtime.entry.title,
         "manufacturer": "Power Metered Water Heater",
         "model": "Storage water heater",
     }
-    plug = runtime.device
-    if plug is not None:
-        info["via_device_id"] = plug.id
-        if plug.area_id and runtime.hass is not None and (area := ar.async_get(runtime.hass).async_get_area(plug.area_id)):
+    source = runtime.device
+    if source is not None:
+        info["via_device_id"] = source.id
+        if source.area_id and runtime.hass is not None and (area := ar.async_get(runtime.hass).async_get_area(source.area_id)):
             info["suggested_area"] = area.name
     return DeviceInfo(**info)
 
