@@ -80,7 +80,11 @@ Restart Home Assistant.
 | Power sensor | The switch's power reading in W. This is the main input. |
 | Tank volume | From the heater's label. |
 
-**Step 2: starting settings** (all can be changed later on the device page)
+**Step 2: the name** of the water heater device. The default is the switch's device
+name without a trailing hardware word ("Water Heater Switch" becomes "Water Heater").
+Entity IDs are built from the area and this name.
+
+**Step 3: starting settings** (all can be changed later on the device page)
 
 | Field | Default | Notes |
 |---|---|---|
@@ -95,11 +99,13 @@ After a restart the integration replays what happened while Home Assistant was d
 
 ## Entities
 
-The integration creates its own device for the water heater. It is named after
-the switch's device (e.g. `Water Heater`), placed in the same area, and shown as
-connected via the switch's device. If the switch has no device, the device is
-named after the switch. You can rename the device afterwards; existing entity IDs
-stay as they are.
+The integration creates its own device for the water heater, with the name from
+step 2, placed in the switch's area and shown as connected via the switch's device.
+You can rename the device afterwards; existing entity IDs stay as they are.
+
+Entities removed in a new version are removed from the registry automatically.
+Don't delete the integration's entities yourself: for a helper, Home Assistant
+deletes the whole helper with them.
 
 Entity IDs follow Home Assistant's usual pattern of area + device name + entity
 name. Below, `<id>` stands for that prefix, e.g. `master_bath_water_heater`.

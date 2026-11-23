@@ -59,7 +59,7 @@ async def _plug(hass: HomeAssistant) -> None:
     from homeassistant.helpers import area_registry as ar
     area = ar.async_get(hass).async_create("Master Bath")
     dev = dr.async_get(hass).async_get_or_create(
-        config_entry_id=src.entry_id, identifiers={("mqtt", "zigbee2mqtt_0x01")}, name="Water Heater")
+        config_entry_id=src.entry_id, identifiers={("mqtt", "zigbee2mqtt_0x01")}, name="Water Heater Switch")
     dr.async_get(hass).async_update_device(dev.id, area_id=area.id)
     reg = er.async_get(hass)
     reg.async_get_or_create("switch", "mqtt", "sw", suggested_object_id="master_bath_water_heater",
@@ -87,6 +87,9 @@ async def _setup(hass: HomeAssistant):
     assert r["type"] is FlowResultType.FORM and r["step_id"] == "user"
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {
         "switch_entity": SWITCH, "power_entity": POWER, "tank_volume": 35})
+    assert r["type"] is FlowResultType.FORM and r["step_id"] == "name"
+    assert r["data_schema"]({})["name"] == "Water Heater"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Water Heater"})
     assert r["type"] is FlowResultType.FORM and r["step_id"] == "settings"
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {
         "thermostat": 66, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
@@ -177,7 +180,8 @@ async def test_switch_without_device_is_named_after_the_switch(recorder_mock, ou
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {
         "switch_entity": "switch.loose", "power_entity": POWER, "tank_volume": 35})
-    assert r["step_id"] == "settings"
+    assert r["step_id"] == "name"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Loose Heater"})
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {
         "thermostat": 65, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
         "learn_from_history": False, "import_statistics": False})
@@ -245,3 +249,20 @@ async def test_backfilled_sums_continue_after_live_statistics(recorder_mock, our
         statistics_during_period, hass, START, None, {sid}, "hour", None, {"sum"})
     sums = [r["sum"] for r in hourly[sid]]
     assert sums == sorted(sums) and sums[-1] == pytest.approx(total, abs=0.5)
+
+
+
+@pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
+async def test_retired_entities_are_removed(recorder_mock, our_integration, hass: HomeAssistant, freezer) -> None:
+    await _plug(hass)
+    await _record_week(hass, freezer)
+    entry = await _setup(hass)
+    reg = er.async_get(hass)
+    reg.async_get_or_create("sensor", DOMAIN, f"{entry.entry_id}_tank_temperature", config_entry=entry,
+                            suggested_object_id="master_bath_water_heater_tank_temperature")
+    assert reg.async_get("sensor.master_bath_water_heater_tank_temperature")
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert reg.async_get("sensor.master_bath_water_heater_tank_temperature") is None
+    assert hass.config_entries.async_get_entry(entry.entry_id) is not None
+    assert reg.async_get("water_heater.master_bath_water_heater")

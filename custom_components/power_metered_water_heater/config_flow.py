@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import device as device_helper, entity_registry as er, selector
 
 from .const import (
-    CONF_COLD_TEMP, CONF_IMPORT_STATISTICS, CONF_LEARN_HISTORY, CONF_POWER, CONF_ROOM_TEMP,
+    CONF_COLD_TEMP, CONF_IMPORT_STATISTICS, CONF_NAME, HARDWARE_SUFFIXES, CONF_LEARN_HISTORY, CONF_POWER, CONF_ROOM_TEMP,
     CONF_SHOWER_FLOW, CONF_SHOWER_TEMP, CONF_SHOWER_THRESHOLD, CONF_SWITCH, CONF_TANK_VOLUME,
     CONF_THERMOSTAT, DEFAULT_COLD_TEMP, DEFAULT_ROOM_TEMP, DEFAULT_SHOWER_FLOW, DEFAULT_SHOWER_TEMP,
     DEFAULT_SHOWER_THRESHOLD, DEFAULT_TANK_VOLUME, DEFAULT_THERMOSTAT, DOMAIN,
@@ -43,6 +43,17 @@ SETTINGS = vol.Schema({
 })
 
 
+def default_name(hass, switch: str) -> str:
+    """The switch's device name (or the switch's name) without a trailing hardware word."""
+    device = device_helper.async_entity_id_to_device(hass, switch)
+    state = hass.states.get(switch)
+    name = (device and (device.name_by_user or device.name)) or (state and state.name) or switch
+    for suffix in HARDWARE_SUFFIXES:
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
 class PowerMeteredWaterHeaterFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 2
 
@@ -55,14 +66,18 @@ class PowerMeteredWaterHeaterFlow(ConfigFlow, domain=DOMAIN):
             entry = er.async_get(self.hass).async_get(switch)
             await self.async_set_unique_id(entry.id if entry else switch)
             self._abort_if_unique_id_configured()
+            self._title = user_input.pop(CONF_NAME, None) or default_name(self.hass, switch)
             self._sources = user_input
-            # the new device is named after the switch's device (or the switch itself)
-            device = device_helper.async_entity_id_to_device(self.hass, switch)
-            state = self.hass.states.get(switch)
-            self._title = ((device and (device.name_by_user or device.name))
-                           or (state and state.name) or switch)
-            return await self.async_step_settings()
+            return await self.async_step_name()
         return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(SOURCES, user_input))
+
+    async def async_step_name(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Name the water heater device (defaults to the switch's device without a hardware word)."""
+        if user_input is not None:
+            self._title = user_input[CONF_NAME].strip() or self._title
+            return await self.async_step_settings()
+        return self.async_show_form(step_id="name", data_schema=vol.Schema({
+            vol.Required(CONF_NAME, default=self._title): selector.TextSelector()}))
 
     async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:

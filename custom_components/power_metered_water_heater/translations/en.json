@@ -34,6 +34,16 @@
           "learn_from_history": "Replay the recorder's history of the switch to learn the heater and start with the current tank state.",
           "import_statistics": "Write hourly statistics for the replayed period, so water and energy charts start before today."
         }
+      },
+      "name": {
+        "title": "Name the water heater",
+        "description": "The integration creates a device with this name, in the switch's area. Entity IDs are built from the area and this name.",
+        "data": {
+          "name": "Name"
+        },
+        "data_description": {
+          "name": "Leave out hardware words like Switch or Plug, so the IDs read like the device's function, e.g. master_bath_water_heater."
+        }
       }
     },
     "abort": {

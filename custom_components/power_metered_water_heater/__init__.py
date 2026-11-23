@@ -4,6 +4,7 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device import async_entity_id_to_device_id
 from homeassistant.helpers.helper_integration import async_handle_source_entity_changes
 
@@ -16,6 +17,7 @@ type HeaterConfigEntry = ConfigEntry[HeaterRuntime]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bool:
+    _remove_retired_entities(hass, entry)
     runtime = HeaterRuntime(hass, entry)
     await runtime.async_start()
     entry.runtime_data = runtime
@@ -24,6 +26,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bo
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     _track_source_renames(hass, entry)
     return True
+
+
+def _remove_retired_entities(hass: HomeAssistant, entry: HeaterConfigEntry) -> None:
+    """Remove registry entries for entities this version no longer provides.
+
+    Otherwise they linger as "no longer provided", and deleting one in the UI
+    deletes the whole helper.
+    """
+    from .number import NUMBERS
+    from .sensor import SENSORS
+
+    keys = {d.key for d in SENSORS} | {d.key for d in NUMBERS} | {"hot_water_ready", "shower", "water_heater"}
+    reg = er.async_get(hass)
+    prefix = f"{entry.entry_id}_"
+    for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
+        if ent.unique_id.startswith(prefix) and ent.unique_id[len(prefix):] not in keys:
+            reg.async_remove(ent.entity_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> None:
+    """Delete the saved model state with the helper."""
+    from homeassistant.helpers.storage import Store
+
+    from .const import DOMAIN
+    from .runtime import STORE_VERSION
+
+    await Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_remove()
 
 
 def _track_source_renames(hass: HomeAssistant, entry: HeaterConfigEntry) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 DOMAIN = "power_metered_water_heater"
 
+CONF_NAME = "name"
 CONF_SWITCH = "switch_entity"
 LEGACY_CONF_ENERGY = "energy_entity"   # removed in v0.1.3 (it was never used)
 CONF_POWER = "power_entity"
@@ -28,3 +29,4 @@ HISTORY_DAYS = 30            # how far back to replay on first setup (recorder k
 SAVE_DELAY_S = 300
 TICK_S = 60
 EVENT_SHOWER = "shower"
+HARDWARE_SUFFIXES = (" Switch", " Plug", " Socket", " Relay")
