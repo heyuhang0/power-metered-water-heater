@@ -31,7 +31,7 @@ def _runtime():
     m = HeaterModel()
     h = week()
     replay(m, h.events, until=h.t)
-    return SimpleNamespace(model=m, entry=SimpleNamespace(entry_id="E"), device=None, switch_id="switch.x",
+    return SimpleNamespace(model=m, entry=SimpleNamespace(entry_id="E", title="Water Heater"), device=None, hass=None, switch_id="switch.x",
                            switch_available=True, async_add_listener=lambda cb: (lambda: None),
                            async_add_shower_listener=lambda cb: (lambda: None), set_setting=lambda k, v: None)
 

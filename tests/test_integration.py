@@ -57,8 +57,11 @@ EXPECTED = [
 async def _plug(hass: HomeAssistant) -> None:
     src = MockConfigEntry(domain="mqtt", title="plug")
     src.add_to_hass(hass)
+    from homeassistant.helpers import area_registry as ar
+    area = ar.async_get(hass).async_create("Master Bath")
     dev = dr.async_get(hass).async_get_or_create(
-        config_entry_id=src.entry_id, identifiers={("mqtt", "zigbee2mqtt_0x01")}, name="Master Bath Water Heater")
+        config_entry_id=src.entry_id, identifiers={("mqtt", "zigbee2mqtt_0x01")}, name="Water Heater")
+    dr.async_get(hass).async_update_device(dev.id, area_id=area.id)
     reg = er.async_get(hass)
     reg.async_get_or_create("switch", "mqtt", "sw", suggested_object_id="master_bath_water_heater",
                             config_entry=src, device_id=dev.id)
@@ -90,7 +93,7 @@ async def _setup(hass: HomeAssistant):
         "thermostat": 66, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
         "learn_from_history": True, "import_statistics": True})
     assert r["type"] is FlowResultType.CREATE_ENTRY
-    assert r["title"] == "Master Bath Water Heater"
+    assert r["title"] == "Water Heater"
     await hass.async_block_till_done()
     return r["result"]
 
@@ -104,9 +107,13 @@ async def test_setup_replays_history_and_names_entities(recorder_mock, our_integ
     reg = er.async_get(hass)
     ours = sorted(e.entity_id for e in er.async_entries_for_config_entry(reg, entry.entry_id))
     assert ours == sorted(EXPECTED)
-    # all attached to the plug's device
+    # all on the integration's own device, in the plug's area, connected via the plug
     dev_ids = {e.device_id for e in er.async_entries_for_config_entry(reg, entry.entry_id)}
-    assert dev_ids == {reg.async_get(SWITCH).device_id}
+    assert len(dev_ids) == 1
+    plug_id = reg.async_get(SWITCH).device_id
+    heater = dr.async_get(hass).async_get(dev_ids.pop())
+    assert heater.id != plug_id and heater.via_device_id == plug_id
+    assert heater.name == "Water Heater" and heater.area_id == "master_bath"
 
     truth = h.litres("shower") + h.litres("other")
     total = float(hass.states.get("sensor.master_bath_water_heater_total_water").state)
