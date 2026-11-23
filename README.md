@@ -121,7 +121,7 @@ name. Below, `<id>` stands for that prefix, e.g. `master_bath_water_heater`.
 | `sensor.<id>_other_water` | L | Sink, short draws, use while switched off, model noise. |
 | `sensor.<id>_shower_energy` | kWh | Electricity that heated shower water. |
 | `sensor.<id>_other_energy` | kWh | Electricity that heated other water. |
-| `sensor.<id>_heat_loss_energy` | kWh | Electricity that replaced standby heat loss. Booked when a reheat ends. |
+| `sensor.<id>_heat_loss_energy` | kWh | Electricity that replaced standby heat loss. Booked when a reheat ends or the switch cuts it short. |
 | `event.<id>_shower` | | Fired once per shower with `water` (L) and `duration` (min). |
 | `sensor.<id>_shower_count` | | Running count. Daily counts come from statistics. |
 | `sensor.<id>_last_shower_water` | L | |
@@ -133,8 +133,9 @@ name. Below, `<id>` stands for that prefix, e.g. `master_bath_water_heater`.
 | `sensor.<id>_heat_loss_rate` | W | Diagnostic: current heat loss at the estimated tank temperature. |
 | `sensor.<id>_last_correction` | L | Diagnostic: how much the last reheat end added on top of the live estimate. |
 
-The three energy sensors split the electricity the switch measured: at every full
-tank, Shower + Other + Heat Loss equals the switch's energy since setup. In the
+The three energy sensors split the electricity the switch measured: whenever no
+reheat is running, Shower + Other + Heat Loss equals the switch's energy since
+setup, so they add up hour by hour and day by day. In the
 Energy dashboard, add the switch's energy sensor as the device and the three parts
 as devices included in it. There is no separate total: the switch's meter is it.
 

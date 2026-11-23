@@ -63,6 +63,26 @@ def test_energy_parts_add_up_to_heater_energy(synthetic):
     assert parts - m._loss_debt == pytest.approx(heat - open_segment, abs=1e-6)
 
 
+def test_parts_match_meter_whenever_no_reheat_runs():
+    """Hour by hour: with no reheat running, shower + other + loss = metered heat (incl. switch-offs)."""
+    h = week()
+    m = HeaterModel(settings=Settings(thermostat_c=h.setpoint_c))
+    pw = sorted([(t, v) for t, k, v in h.events if k == "power"])
+    first_full = next(pw[i + 1][0] for i, (t, v) in enumerate(pw[:-1]) if v > 0)
+    def metered(until):
+        return sum(v * (min(pw[i + 1][0], until) - t) for i, (t, v) in enumerate(pw[:-1])
+                   if t >= first_full and t < until) / 3.6e6
+    checked = 0
+    def snap(t, mm):
+        nonlocal checked
+        if mm._burst is None and mm._end_pending is None and mm.deficit is not None:
+            parts = mm.totals.shower_kwh + mm.totals.other_kwh + mm.totals.loss_kwh - mm._loss_debt
+            assert parts == pytest.approx(metered(t), abs=1e-6), t / 3600
+            checked += 1
+    replay(m, h.events, until=h.t, snapshot=snap)
+    assert checked > 100
+
+
 def test_old_saved_state_does_not_book_loss_twice(synthetic):
     """State saved by 0.1.3 booked heat loss live; loading it must not book that loss again."""
     _, m, *_ = synthetic

@@ -16,9 +16,9 @@ The tank's *heat deficit* D (kWh below full) is tracked continuously:
 Water energy is converted to litres of mixed water at the shower temperature.
 A reheat whose water energy exceeds ``shower_threshold_kwh`` is a shower.
 
-Energy: when a reheat ends with the tank full, the segment's metered heat is
-split into water (shower / other) and heat loss, so the three parts always add
-up to what the switch measured.
+Energy: when a reheat ends (tank full, or cut short by the switch) the heat the
+switch metered so far is split into water (shower / other) and heat loss. So
+whenever no reheat is running, the three parts add up to what the switch measured.
 
 Live behaviour: during a reheat only the guaranteed minimum is booked, so the
 running totals never have to go down. Once that minimum passes the shower
@@ -112,6 +112,7 @@ class _Segment:
     cut_shower_kwh: float = 0.0   # shower credited from a reheat the switch cut short
     water_booked: float = 0.0     # water energy added to the totals in this segment (after debts)
     loss_prebooked: float = 0.0   # heat loss already booked live by versions before 0.1.4
+    loss_settled: float = 0.0     # heat booked as loss at switch-offs within this segment
 
 
 ShowerCallback = Callable[[float, float, float], None]   # (time, litres, minutes)
@@ -318,6 +319,8 @@ class HeaterModel:
                     seg.booked += extra
                     seg.classified += u
                     self.deficit = max(0.0, self.deficit - b.best + u)
+            # the switch metered this heat now: book it now, so the parts match the meter
+            self._settle_loss(seg)
             return
         s, ln = self.settings, self.learned
         u = seg.heat - seg.loss - seg.classified
@@ -364,11 +367,7 @@ class HeaterModel:
             self._learn_quiet(b.heat, (t_end - seg.start) / 3600)
         # the heater has now replaced everything the tank lost: whatever this segment's
         # metered heat did not put into water is heat loss, so the parts add up to the meter
-        loss = seg.heat - seg.water_booked - seg.loss_prebooked
-        if loss < 0:
-            self._loss_debt += -loss
-        else:
-            self._book_loss(loss)
+        self._settle_loss(seg)
         self.deficit = 0.0
         self._seg = _Segment(start=t_end)
         self._mark_full()
@@ -413,6 +412,15 @@ class HeaterModel:
             self._loss_debt -= take
             kwh -= take
         self.totals.loss_kwh += kwh
+
+    def _settle_loss(self, seg: _Segment) -> None:
+        """Book as heat loss the segment's metered heat not yet booked as water or loss."""
+        x = seg.heat - seg.water_booked - seg.loss_prebooked - seg.loss_settled
+        if x < 0:
+            self._loss_debt += -x
+        else:
+            self._book_loss(x)
+        seg.loss_settled += x
 
     def _learn_quiet(self, band_heat: float, hours: float) -> None:
         s, ln = self.settings, self.learned
