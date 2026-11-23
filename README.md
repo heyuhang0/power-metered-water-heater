@@ -130,7 +130,7 @@ name. Below, `<id>` stands for that prefix, e.g. `master_bath_water_heater`.
 | `number.<id>_shower_flow` | L/min | |
 | `number.<id>_shower_temperature` | °C | |
 | `number.<id>_cold_water_temperature` | °C | |
-| `sensor.<id>_heat_loss_rate` | W | Diagnostic, hidden by default. |
+| `sensor.<id>_heat_loss_rate` | W | Diagnostic: current heat loss at the estimated tank temperature. |
 | `sensor.<id>_last_correction` | L | Diagnostic: how much the last reheat end added on top of the live estimate. |
 
 The three energy sensors split the electricity the switch measured: at every full

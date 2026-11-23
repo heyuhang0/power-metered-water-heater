@@ -60,11 +60,11 @@ SENSORS: tuple[HeaterSensorDescription, ...] = (
                             value_fn=lambda m: m.last_shower_min, digits=1),
     HeaterSensorDescription(key="heat_loss_rate", device_class=SensorDeviceClass.POWER, state_class=MEAS,
                             native_unit_of_measurement=UnitOfPower.WATT, suggested_display_precision=0,
-                            entity_category=EntityCategory.DIAGNOSTIC, entity_registry_visible_default=False,
+                            entity_category=EntityCategory.DIAGNOSTIC,
                             value_fn=lambda m: m.heat_loss_w, digits=1),
     HeaterSensorDescription(key="last_correction", device_class=SensorDeviceClass.VOLUME,
                             native_unit_of_measurement=L, suggested_display_precision=1,
-                            entity_category=EntityCategory.DIAGNOSTIC, entity_registry_visible_default=False,
+                            entity_category=EntityCategory.DIAGNOSTIC,
                             value_fn=lambda m: m.last_correction_l, digits=1),
 )
 
