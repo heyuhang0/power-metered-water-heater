@@ -51,7 +51,11 @@ def test_every_entity_builds_and_reports_state():
             assert e.native_value > 0
     wh = ents[-1 - len(number.NUMBERS)]
     assert wh.current_operation in wh.operation_list
-    assert wh.current_temperature is not None and wh.target_temperature == rt.model.settings.thermostat_c
+    assert wh._tank_temp() is not None and wh._target_temp() == rt.model.settings.thermostat_c
+    # HA 2026.11+: the native_* members, so no deprecation warning is logged
+    if hasattr(water_heater.WaterHeaterEntity, "native_current_temperature"):
+        assert "native_current_temperature" in vars(water_heater.PoweredWaterHeater)
+        assert "current_temperature" not in vars(water_heater.PoweredWaterHeater)
 
 
 def test_translations_cover_every_entity_and_match():
