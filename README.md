@@ -2,8 +2,9 @@
 
 A Home Assistant helper for a **storage (tank) water heater powered through a
 power-metering switch or smart plug**. From its on/off state and power reading alone it
-gives you a proper `water_heater` entity, the tank's estimated temperature, how
-much hot water is left, and how much water was used: showers and everything else.
+gives you a proper `water_heater` entity with the tank's estimated temperature, how
+much hot water is left, how much water was used (showers and everything else),
+and where the heater's electricity went.
 
 [![Open your Home Assistant instance and open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=heyuhang0&repository=power-metered-water-heater&category=integration)
 
@@ -88,7 +89,7 @@ Restart Home Assistant.
 | Shower temperature | 38 °C | |
 | Cold water temperature | 30 °C | Cold mains water. Each 1 °C error moves litres by roughly 12 %. |
 | Learn from recorder history | on | Replays the switch's recorded history (10 days by default) to learn the heater and start with the current tank state. |
-| Backfill statistics | on | Writes hourly statistics for that period, so water and energy charts start before today. History graphs still start at setup. |
+| Backfill statistics | on | Writes statistics for that period, so water and energy charts start before today. History graphs still start at setup. |
 
 After a restart the integration replays what happened while Home Assistant was down.
 
@@ -105,17 +106,16 @@ name. Below, `<id>` stands for that prefix, e.g. `master_bath_water_heater`.
 
 | Entity | Unit | Meaning |
 |---|---|---|
-| `water_heater.<id>` | | On (Electric) / Off. Turns the switch on and off. Shows the estimated tank temperature. |
+| `water_heater.<id>` | | On (Electric) / Off. Turns the switch on and off. Its current temperature is the estimated tank temperature (exact at the end of each reheat). |
 | `binary_sensor.<id>_hot_water_ready` | | On once the first reheat after switch-on has finished. |
-| `sensor.<id>_tank_temperature` | °C | Estimated. Exact at the end of each reheat. |
 | `sensor.<id>_hot_water_remaining` | % | Heat stored above the shower temperature, relative to a full tank. |
 | `sensor.<id>_shower_minutes_left` | min | How long a shower can last from now, with the heater's help when it is on. |
 | `sensor.<id>_total_water` | L | All water this heater supplied. Use this one in the Energy dashboard. |
 | `sensor.<id>_shower_water` | L | Part of the total that came from showers. |
 | `sensor.<id>_other_water` | L | Sink, short draws, use while switched off, model noise. |
-| `sensor.<id>_shower_energy` | kWh | Same split as the water, in energy. |
-| `sensor.<id>_other_energy` | kWh | |
-| `sensor.<id>_heat_loss_energy` | kWh | Standby losses. Shower + Other + Heat Loss = the energy the switch measured, at every full tank. |
+| `sensor.<id>_shower_energy` | kWh | Electricity that heated shower water. |
+| `sensor.<id>_other_energy` | kWh | Electricity that heated other water. |
+| `sensor.<id>_heat_loss_energy` | kWh | Electricity that replaced standby heat loss. Booked when a reheat ends. |
 | `event.<id>_shower` | | Fired once per shower with `water` (L) and `duration` (min). |
 | `sensor.<id>_shower_count` | | Running count. Daily counts come from statistics. |
 | `sensor.<id>_last_shower_water` | L | |
@@ -126,6 +126,11 @@ name. Below, `<id>` stands for that prefix, e.g. `master_bath_water_heater`.
 | `number.<id>_cold_water_temperature` | °C | |
 | `sensor.<id>_heat_loss_rate` | W | Diagnostic, hidden by default. |
 | `sensor.<id>_last_correction` | L | Diagnostic: how much the last reheat end added on top of the live estimate. |
+
+The three energy sensors split the electricity the switch measured: at every full
+tank, Shower + Other + Heat Loss equals the switch's energy since setup. In the
+Energy dashboard, add the switch's energy sensor as the device and the three parts
+as devices included in it. There is no separate total: the switch's meter is it.
 
 Tip: hide the switch entity and use the water heater entity in automations,
 dashboards and HomeKit. The integration follows the switch and power sensor if

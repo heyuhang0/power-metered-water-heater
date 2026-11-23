@@ -53,13 +53,24 @@ def test_totals_never_decrease(synthetic):
 
 
 def test_energy_parts_add_up_to_heater_energy(synthetic):
+    """At every full tank, shower + other + heat loss = metered heat since tracking began."""
     h, m, *_ = synthetic
     pw = [(t, v) for t, k, v in h.events if k == "power"]
     first_full = next(pw[i + 1][0] for i, (t, v) in enumerate(pw[:-1]) if v > 0)  # tracking starts here
     heat = sum(v * (pw[i + 1][0] - t) for i, (t, v) in enumerate(pw[:-1]) if t >= first_full) / 3.6e6
     parts = m.totals.shower_kwh + m.totals.other_kwh + m.totals.loss_kwh
-    # equal once the heat still missing from the tank at the end is allowed for
-    assert parts - m.deficit == pytest.approx(heat, abs=0.1)
+    open_segment = m._seg.heat if m._seg else 0.0
+    assert parts - m._loss_debt == pytest.approx(heat - open_segment, abs=1e-6)
+
+
+def test_old_saved_state_does_not_book_loss_twice(synthetic):
+    """State saved by 0.1.3 booked heat loss live; loading it must not book that loss again."""
+    _, m, *_ = synthetic
+    d = json.loads(json.dumps(m.to_dict()))
+    d["_seg"] = {k: v for k, v in d["_seg"].items() if k not in ("water_booked", "loss_prebooked")}
+    d["_seg"]["loss"] = 0.4
+    m2 = HeaterModel.from_dict(d)
+    assert m2._seg.loss_prebooked == 0.4
 
 
 def test_learns_loss_rate(synthetic):

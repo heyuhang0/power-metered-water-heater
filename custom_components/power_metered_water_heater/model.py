@@ -16,6 +16,10 @@ The tank's *heat deficit* D (kWh below full) is tracked continuously:
 Water energy is converted to litres of mixed water at the shower temperature.
 A reheat whose water energy exceeds ``shower_threshold_kwh`` is a shower.
 
+Energy: when a reheat ends with the tank full, the segment's metered heat is
+split into water (shower / other) and heat loss, so the three parts always add
+up to what the switch measured.
+
 Live behaviour: during a reheat only the guaranteed minimum is booked, so the
 running totals never have to go down. Once that minimum passes the shower
 threshold the reheat is known to be a shower and its litres are booked live.
@@ -106,6 +110,8 @@ class _Segment:
     was_off: bool = False
     bursts: int = 0
     cut_shower_kwh: float = 0.0   # shower credited from a reheat the switch cut short
+    water_booked: float = 0.0     # water energy added to the totals in this segment (after debts)
+    loss_prebooked: float = 0.0   # heat loss already booked live by versions before 0.1.4
 
 
 ShowerCallback = Callable[[float, float, float], None]   # (time, litres, minutes)
@@ -238,7 +244,6 @@ class HeaterModel:
             loss = self._ua() * (tt - s.room_temp_c) / 1000 * dt_h if tt is not None else 0.0
             loss = max(0.0, loss)
             self.deficit += loss
-            self._book_loss(loss)
             if self._seg is not None:
                 self._seg.loss += loss
         if p_kw <= 0 or self._burst is None:
@@ -321,11 +326,8 @@ class HeaterModel:
                  and not b.early and t_end - seg.start >= QUIET_MIN_S)
         follow = (self._prev_big is not None and t_end - self._prev_big["end"] < FOLLOWUP_S + 3600
                   and b.start - self._prev_big["end"] < FOLLOWUP_S and b.heat < 0.3 and not seg.was_off)
-        if u < 0:
-            self._loss_debt += -u
         if follow and self._prev_big["kind"] != "shower":
             # tank was not fully mixed after a reheat from cold: this is heat loss
-            self._book_loss(max(0.0, u - live_unclassified))
             self.last_correction_l = 0.0
             self._prev_big = None
         elif follow:
@@ -360,6 +362,13 @@ class HeaterModel:
                               if (kind == "shower" or b.heat > 0.3) else None)
         if quiet and not follow:
             self._learn_quiet(b.heat, (t_end - seg.start) / 3600)
+        # the heater has now replaced everything the tank lost: whatever this segment's
+        # metered heat did not put into water is heat loss, so the parts add up to the meter
+        loss = seg.heat - seg.water_booked - seg.loss_prebooked
+        if loss < 0:
+            self._loss_debt += -loss
+        else:
+            self._book_loss(loss)
         self.deficit = 0.0
         self._seg = _Segment(start=t_end)
         self._mark_full()
@@ -386,6 +395,8 @@ class HeaterModel:
             kwh -= take
             if kwh <= 0:
                 return
+        if self._seg is not None:
+            self._seg.water_booked += kwh
         lit = kwh / self.settings.kwh_per_litre
         if kind == "shower":
             self.totals.shower_kwh += kwh
@@ -445,6 +456,9 @@ class HeaterModel:
             if hasattr(m, k):
                 setattr(m, k, v)
         m._burst = _Burst(**b) if b else None
+        if sg and "water_booked" not in sg:
+            # saved by <= 0.1.3, which booked heat loss live: don't book this segment's loss twice
+            sg = {**sg, "water_booked": sg.get("booked", 0.0), "loss_prebooked": sg.get("loss", 0.0)}
         m._seg = _Segment(**sg) if sg else None
         return m
 

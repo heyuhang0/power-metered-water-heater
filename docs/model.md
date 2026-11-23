@@ -34,6 +34,11 @@ U = heater energy − modelled loss
 - Litres = `U / (4.186 × (shower temp − cold temp) / 3600)`.
 - Minutes = litres / shower flow.
 
+Energy is split at the same moment: the segment's metered heat minus the water
+energy booked in it is heat loss. So shower + other + heat loss always equals the
+metered heat at every anchor, and heat loss lost while switched off is booked
+with the morning reheat that replaces it.
+
 Live, during a reheat, only the guaranteed minimum `heat − deficit at start − margin`
 is booked. Once it passes the threshold the reheat is known to be a shower and is
 booked to Shower live. The rest is settled when the reheat ends. Any over-booking

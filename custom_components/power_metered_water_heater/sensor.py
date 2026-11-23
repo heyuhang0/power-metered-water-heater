@@ -1,4 +1,7 @@
-"""Sensors: tank state, water and energy totals, shower stats, diagnostics."""
+"""Sensors: hot water left, water and energy totals, shower stats, diagnostics.
+
+The tank temperature is the water heater entity's current temperature.
+"""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -8,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass, SensorEntity, SensorEntityDescription, SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime, UnitOfVolume
+from homeassistant.const import EntityCategory, PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfTime, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -25,9 +28,6 @@ class HeaterSensorDescription(SensorEntityDescription):
 L, KWH, MEAS, TOTAL_INC = UnitOfVolume.LITERS, UnitOfEnergy.KILO_WATT_HOUR, SensorStateClass.MEASUREMENT, SensorStateClass.TOTAL_INCREASING
 
 SENSORS: tuple[HeaterSensorDescription, ...] = (
-    HeaterSensorDescription(key="tank_temperature", device_class=SensorDeviceClass.TEMPERATURE, state_class=MEAS,
-                            native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=1,
-                            value_fn=lambda m: m.tank_temp_c, digits=2),
     HeaterSensorDescription(key="hot_water_remaining", state_class=MEAS, native_unit_of_measurement=PERCENTAGE,
                             suggested_display_precision=0, value_fn=lambda m: m.hot_water_remaining_pct, digits=1),
     HeaterSensorDescription(key="shower_minutes_left", device_class=SensorDeviceClass.DURATION, state_class=MEAS,

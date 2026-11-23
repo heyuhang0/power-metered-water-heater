@@ -33,7 +33,6 @@ EXPECTED = [
     "water_heater.master_bath_water_heater",
     "binary_sensor.master_bath_water_heater_hot_water_ready",
     "event.master_bath_water_heater_shower",
-    "sensor.master_bath_water_heater_tank_temperature",
     "sensor.master_bath_water_heater_hot_water_remaining",
     "sensor.master_bath_water_heater_shower_minutes_left",
     "sensor.master_bath_water_heater_total_water",
@@ -218,3 +217,31 @@ async def test_migrates_v1_entry_without_energy_setting(recorder_mock, our_integ
     assert await hass.config_entries.async_setup(old.entry_id)
     await hass.async_block_till_done()
     assert old.version == 2 and "energy_entity" not in old.data
+
+
+@pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
+async def test_backfilled_sums_continue_after_live_statistics(recorder_mock, our_integration, hass: HomeAssistant, freezer) -> None:
+    """HA continues a sum from its latest 5-minute row; the backfill must leave one."""
+    from homeassistant.components.recorder.statistics import statistics_during_period
+    from pytest_homeassistant_custom_component.components.recorder.common import do_adhoc_statistics
+
+    await _plug(hass)
+    await _record_week(hass, freezer)
+    await _setup(hass)
+    await async_wait_recording_done(hass)
+    sid = "sensor.master_bath_water_heater_total_water"
+    total = float(hass.states.get(sid).state)
+    now = dt_util.utcnow()
+    nxt = now.replace(second=0, microsecond=0) + dt.timedelta(minutes=5 - now.minute % 5)
+    for k in range(13):                      # a full hour of 5-minute runs, including the hourly one
+        start = nxt + dt.timedelta(minutes=5 * k)
+        freezer.move_to(start + dt.timedelta(minutes=5, seconds=10))
+        do_adhoc_statistics(hass, start=start)
+        await async_wait_recording_done(hass)
+    short = await hass.async_add_executor_job(
+        statistics_during_period, hass, now - dt.timedelta(hours=1), None, {sid}, "5minute", None, {"sum"})
+    assert short[sid][-1]["sum"] == pytest.approx(total, abs=0.5)
+    hourly = await hass.async_add_executor_job(
+        statistics_during_period, hass, START, None, {sid}, "hour", None, {"sum"})
+    sums = [r["sum"] for r in hourly[sid]]
+    assert sums == sorted(sums) and sums[-1] == pytest.approx(total, abs=0.5)

@@ -8,6 +8,7 @@ from functools import partial
 from typing import Any
 
 from homeassistant.components.recorder import get_instance, history
+from homeassistant.components.recorder.db_schema import StatisticsShortTerm
 from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import async_import_statistics, get_last_statistics
 from homeassistant.config_entries import ConfigEntry
@@ -31,14 +32,14 @@ _LOGGER = logging.getLogger(__name__)
 STORE_VERSION = 1
 BAD = (None, STATE_UNKNOWN, STATE_UNAVAILABLE)
 
-# sensor key -> (unit, unit_class, value from a model snapshot)
+# sensor key -> (unit, unit_class, value as the sensor reports it)
 STAT_TOTALS: dict[str, tuple[str | None, str | None, Callable[[HeaterModel], float]]] = {
-    "total_water": ("L", "volume", lambda m: m.totals.total_l),
-    "shower_water": ("L", "volume", lambda m: m.totals.shower_l),
-    "other_water": ("L", "volume", lambda m: m.totals.other_l),
-    "shower_energy": ("kWh", "energy", lambda m: m.totals.shower_kwh),
-    "other_energy": ("kWh", "energy", lambda m: m.totals.other_kwh),
-    "heat_loss_energy": ("kWh", "energy", lambda m: m.totals.loss_kwh),
+    "total_water": ("L", "volume", lambda m: round(m.totals.total_l, 2)),
+    "shower_water": ("L", "volume", lambda m: round(m.totals.shower_l, 2)),
+    "other_water": ("L", "volume", lambda m: round(m.totals.other_l, 2)),
+    "shower_energy": ("kWh", "energy", lambda m: round(m.totals.shower_kwh, 4)),
+    "other_energy": ("kWh", "energy", lambda m: round(m.totals.other_kwh, 4)),
+    "heat_loss_energy": ("kWh", "energy", lambda m: round(m.totals.loss_kwh, 4)),
     "shower_count": (None, None, lambda m: float(m.totals.shower_count)),
 }
 
@@ -167,8 +168,11 @@ class HeaterRuntime:
             return
         reg = er.async_get(self.hass)
         now = dt_util.utcnow().timestamp()
+        # HA continues a sum from the latest 5-minute row, so leave one at the current value
+        short_start = dt_util.utc_from_timestamp(now - now % 300 - 300)
+        recorder = get_instance(self.hass)
         done = 0
-        for key, (unit, unit_class, _) in STAT_TOTALS.items():
+        for key, (unit, unit_class, value_fn) in STAT_TOTALS.items():
             entity_id = reg.async_get_entity_id("sensor", DOMAIN, f"{self.entry.entry_id}_{key}")
             if entity_id is None:
                 continue
@@ -187,6 +191,9 @@ class HeaterRuntime:
             ]
             if rows:
                 async_import_statistics(self.hass, meta, rows)
+                current = value_fn(self.model)
+                recorder.async_import_statistics(
+                    meta, [{"start": short_start, "state": current, "sum": current}], StatisticsShortTerm)
                 done += 1
         self.stats_imported = True
         self._snapshots.clear()

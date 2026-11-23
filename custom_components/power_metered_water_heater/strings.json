@@ -90,9 +90,6 @@
       }
     },
     "sensor": {
-      "tank_temperature": {
-        "name": "Tank Temperature"
-      },
       "hot_water_remaining": {
         "name": "Hot Water Remaining"
       },
