@@ -172,3 +172,23 @@ async def test_rejects_switch_without_device(recorder_mock, our_integration, has
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {
         "switch_entity": "switch.loose", "power_entity": POWER, "tank_volume": 35})
     assert r["errors"] == {"switch_entity": "no_device"}
+
+
+@pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
+async def test_follows_switch_rename(recorder_mock, our_integration, hass: HomeAssistant, freezer) -> None:
+    await _plug(hass)
+    await _record_week(hass, freezer)
+    entry = await _setup(hass)
+    total_before = hass.states.get("sensor.master_bath_water_heater_total_water").state
+    er.async_get(hass).async_update_entity(SWITCH, new_entity_id="switch.master_bath_water_heater_switch")
+    await hass.async_block_till_done()
+    assert entry.data["switch_entity"] == "switch.master_bath_water_heater_switch"
+    assert entry.runtime_data.switch_id == "switch.master_bath_water_heater_switch"
+    # model state survives the reload
+    assert hass.states.get("sensor.master_bath_water_heater_total_water").state == total_before
+    hass.states.async_set("switch.master_bath_water_heater_switch", STATE_ON)   # the plug reports under its new ID
+    await hass.async_block_till_done()
+    calls = async_mock_service(hass, "switch", "turn_off")
+    await hass.services.async_call("water_heater", "turn_off",
+                                   {"entity_id": "water_heater.master_bath_water_heater"}, blocking=True)
+    assert calls[0].data["entity_id"] == "switch.master_bath_water_heater_switch"
