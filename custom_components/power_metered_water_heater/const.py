@@ -5,28 +5,27 @@ DOMAIN = "power_metered_water_heater"
 
 CONF_NAME = "name"
 CONF_SWITCH = "switch_entity"
-LEGACY_CONF_ENERGY = "energy_entity"   # removed in v0.1.3 (it was never used)
 CONF_POWER = "power_entity"
+# heater
 CONF_TANK_VOLUME = "tank_volume"
 CONF_THERMOSTAT = "thermostat"
-CONF_SHOWER_FLOW = "shower_flow"
-CONF_SHOWER_TEMP = "shower_temperature"
-CONF_COLD_TEMP = "cold_water_temperature"
+CONF_BAND = "thermostat_band"
+CONF_HEAT_LOSS = "heat_loss"
 CONF_ROOM_TEMP = "room_temperature"
-CONF_SHOWER_THRESHOLD = "shower_threshold"
-CONF_LEARN_HISTORY = "learn_from_history"
-CONF_IMPORT_STATISTICS = "import_statistics"
+# water
+CONF_COLD_TEMP = "cold_water_temperature"
+CONF_WARM_TEMP = "warm_water_temperature"
+CONF_FROM_HISTORY = "from_history"
+# showers (optional)
+CONF_SHOWER_FLOW = "shower_flow"
+CONF_SHORTEST_SHOWER = "shortest_shower"
 
-DEFAULT_TANK_VOLUME = 35.0
-DEFAULT_THERMOSTAT = 65.0
-DEFAULT_SHOWER_FLOW = 9.5
-DEFAULT_SHOWER_TEMP = 38.0
-DEFAULT_COLD_TEMP = 30.0
-DEFAULT_ROOM_TEMP = 30.0
-DEFAULT_SHOWER_THRESHOLD = 0.35
+HEATER_KEYS = (CONF_TANK_VOLUME, CONF_THERMOSTAT, CONF_BAND, CONF_HEAT_LOSS, CONF_ROOM_TEMP)
+WATER_KEYS = (CONF_COLD_TEMP, CONF_WARM_TEMP)
+SHOWER_KEYS = (CONF_SHOWER_FLOW, CONF_SHORTEST_SHOWER)
 
+HARDWARE_SUFFIXES = (" Switch", " Plug", " Socket", " Relay")
 HISTORY_DAYS = 30            # how far back to replay on first setup (recorder keeps 10 by default)
 SAVE_DELAY_S = 300
 TICK_S = 60
 EVENT_SHOWER = "shower"
-HARDWARE_SUFFIXES = (" Switch", " Plug", " Socket", " Relay")

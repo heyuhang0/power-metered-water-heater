@@ -1,4 +1,4 @@
-"""Setup: step 1 picks the switch and its power sensor, step 2 the starting settings."""
+"""Setup: switch, name, heater, water, showers (optional). Configure edits all but the name."""
 from __future__ import annotations
 
 from typing import Any
@@ -7,14 +7,13 @@ import voluptuous as vol
 
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device as device_helper, entity_registry as er, selector
 
 from .const import (
-    CONF_COLD_TEMP, CONF_IMPORT_STATISTICS, CONF_NAME, HARDWARE_SUFFIXES, CONF_LEARN_HISTORY, CONF_POWER, CONF_ROOM_TEMP,
-    CONF_SHOWER_FLOW, CONF_SHOWER_TEMP, CONF_SHOWER_THRESHOLD, CONF_SWITCH, CONF_TANK_VOLUME,
-    CONF_THERMOSTAT, DEFAULT_COLD_TEMP, DEFAULT_ROOM_TEMP, DEFAULT_SHOWER_FLOW, DEFAULT_SHOWER_TEMP,
-    DEFAULT_SHOWER_THRESHOLD, DEFAULT_TANK_VOLUME, DEFAULT_THERMOSTAT, DOMAIN,
+    CONF_BAND, CONF_COLD_TEMP, CONF_FROM_HISTORY, CONF_HEAT_LOSS, CONF_NAME, CONF_POWER, CONF_ROOM_TEMP,
+    CONF_SHORTEST_SHOWER, CONF_SHOWER_FLOW, CONF_SWITCH, CONF_TANK_VOLUME, CONF_THERMOSTAT,
+    CONF_WARM_TEMP, DOMAIN, HARDWARE_SUFFIXES,
 )
 
 
@@ -23,27 +22,32 @@ def _num(lo: float, hi: float, step: float, unit: str) -> selector.NumberSelecto
         min=lo, max=hi, step=step, unit_of_measurement=unit, mode=selector.NumberSelectorMode.BOX))
 
 
-def _power_sel() -> selector.EntitySelector:
-    return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.POWER))
+def _switch_fields() -> dict:
+    return {
+        vol.Required(CONF_SWITCH): selector.EntitySelector(selector.EntitySelectorConfig(domain="switch")),
+        vol.Required(CONF_POWER): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.POWER)),
+    }
 
 
-SOURCES = vol.Schema({
-    vol.Required(CONF_SWITCH): selector.EntitySelector(selector.EntitySelectorConfig(domain="switch")),
-    vol.Required(CONF_POWER): _power_sel(),
-    vol.Required(CONF_TANK_VOLUME, default=DEFAULT_TANK_VOLUME): _num(5, 500, 1, "L"),
-})
+HEATER = {
+    vol.Required(CONF_TANK_VOLUME): _num(5, 500, 1, "L"),
+    vol.Required(CONF_THERMOSTAT): _num(40, 90, 0.5, "°C"),
+    vol.Required(CONF_BAND): _num(0.02, 3, 0.001, "kWh"),
+    vol.Required(CONF_HEAT_LOSS): _num(0.1, 20, 0.01, "W/°C"),
+    vol.Required(CONF_ROOM_TEMP): _num(0, 45, 0.5, "°C"),
+}
+WATER = {
+    vol.Required(CONF_COLD_TEMP): _num(0, 40, 0.5, "°C"),
+    vol.Required(CONF_WARM_TEMP): _num(25, 60, 0.5, "°C"),
+}
+SHOWERS = {
+    vol.Optional(CONF_SHOWER_FLOW): _num(1, 30, 0.1, "L/min"),
+    vol.Optional(CONF_SHORTEST_SHOWER): _num(1, 30, 0.5, "min"),
+}
 
-SETTINGS = vol.Schema({
-    vol.Required(CONF_THERMOSTAT, default=DEFAULT_THERMOSTAT): _num(40, 80, 0.5, "°C"),
-    vol.Required(CONF_SHOWER_FLOW, default=DEFAULT_SHOWER_FLOW): _num(2, 25, 0.1, "L/min"),
-    vol.Required(CONF_SHOWER_TEMP, default=DEFAULT_SHOWER_TEMP): _num(30, 50, 0.5, "°C"),
-    vol.Required(CONF_COLD_TEMP, default=DEFAULT_COLD_TEMP): _num(5, 40, 0.5, "°C"),
-    vol.Required(CONF_LEARN_HISTORY, default=True): selector.BooleanSelector(),
-    vol.Required(CONF_IMPORT_STATISTICS, default=True): selector.BooleanSelector(),
-})
 
-
-def default_name(hass, switch: str) -> str:
+def default_name(hass: HomeAssistant, switch: str) -> str:
     """The switch's device name (or the switch's name) without a trailing hardware word."""
     device = device_helper.async_entity_id_to_device(hass, switch)
     state = hass.states.get(switch)
@@ -54,11 +58,17 @@ def default_name(hass, switch: str) -> str:
     return name
 
 
+def _showers_valid(data: dict[str, Any]) -> bool:
+    """Both shower fields, or neither."""
+    return bool(data.get(CONF_SHOWER_FLOW)) == bool(data.get(CONF_SHORTEST_SHOWER))
+
+
 class PowerMeteredWaterHeaterFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
-        self._sources: dict[str, Any] = {}
+        self._data: dict[str, Any] = {}
+        self._title = ""
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -66,24 +76,38 @@ class PowerMeteredWaterHeaterFlow(ConfigFlow, domain=DOMAIN):
             entry = er.async_get(self.hass).async_get(switch)
             await self.async_set_unique_id(entry.id if entry else switch)
             self._abort_if_unique_id_configured()
-            self._title = user_input.pop(CONF_NAME, None) or default_name(self.hass, switch)
-            self._sources = user_input
+            self._data.update(user_input)
+            self._title = default_name(self.hass, switch)
             return await self.async_step_name()
-        return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(SOURCES, user_input))
+        return self.async_show_form(step_id="user", data_schema=vol.Schema(_switch_fields()))
 
     async def async_step_name(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Name the water heater device (defaults to the switch's device without a hardware word)."""
         if user_input is not None:
             self._title = user_input[CONF_NAME].strip() or self._title
-            return await self.async_step_settings()
+            return await self.async_step_heater()
         return self.async_show_form(step_id="name", data_schema=vol.Schema({
             vol.Required(CONF_NAME, default=self._title): selector.TextSelector()}))
 
-    async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_heater(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(title=self._title, data={**self._sources, **user_input})
-        return self.async_show_form(step_id="settings", data_schema=SETTINGS,
-                                    description_placeholders={"device": self._title})
+            self._data.update(user_input)
+            return await self.async_step_water()
+        return self.async_show_form(step_id="heater", data_schema=vol.Schema(HEATER))
+
+    async def async_step_water(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_showers()
+        return self.async_show_form(step_id="water", data_schema=vol.Schema({
+            **WATER, vol.Required(CONF_FROM_HISTORY, default=True): selector.BooleanSelector()}))
+
+    async def async_step_showers(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if _showers_valid(user_input):
+                return self.async_create_entry(title=self._title, data={**self._data, **user_input})
+            errors["base"] = "showers_incomplete"
+        return self.async_show_form(step_id="showers", data_schema=vol.Schema(SHOWERS), errors=errors)
 
     @staticmethod
     @callback
@@ -92,14 +116,15 @@ class PowerMeteredWaterHeaterFlow(ConfigFlow, domain=DOMAIN):
 
 
 class PowerMeteredWaterHeaterOptions(OptionsFlow):
+    """All settings except the name, in one form. Saving reloads the helper."""
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
-        cur = {**self.config_entry.data, **self.config_entry.options}
-        schema = vol.Schema({
-            vol.Required(CONF_POWER): _power_sel(),
-                    vol.Required(CONF_TANK_VOLUME): _num(5, 500, 1, "L"),
-            vol.Required(CONF_SHOWER_THRESHOLD, default=DEFAULT_SHOWER_THRESHOLD): _num(0.1, 2, 0.05, "kWh"),
-            vol.Required(CONF_ROOM_TEMP, default=DEFAULT_ROOM_TEMP): _num(5, 45, 0.5, "°C"),
-        })
-        return self.async_show_form(step_id="init", data_schema=self.add_suggested_values_to_schema(schema, cur))
+            if _showers_valid(user_input):
+                return self.async_create_entry(data=user_input)
+            errors["base"] = "showers_incomplete"
+        schema = vol.Schema({**_switch_fields(), **HEATER, **WATER, **SHOWERS})
+        current = {**self.config_entry.data, **self.config_entry.options}
+        return self.async_show_form(step_id="init", errors=errors,
+                                    data_schema=self.add_suggested_values_to_schema(schema, user_input or current))

@@ -29,28 +29,16 @@ DOMAIN = "power_metered_water_heater"
 SWITCH, POWER = "switch.master_bath_water_heater", "sensor.master_bath_water_heater_power"
 START = dt.datetime(2026, 11, 2, 0, 0, tzinfo=dt.timezone.utc)
 
-EXPECTED = [
-    "water_heater.master_bath_water_heater",
-    "binary_sensor.master_bath_water_heater_hot_water_ready",
-    "event.master_bath_water_heater_shower",
-    "sensor.master_bath_water_heater_hot_water_remaining",
-    "sensor.master_bath_water_heater_shower_minutes_left",
-    "sensor.master_bath_water_heater_total_water",
-    "sensor.master_bath_water_heater_shower_water",
-    "sensor.master_bath_water_heater_other_water",
-    "sensor.master_bath_water_heater_shower_energy",
-    "sensor.master_bath_water_heater_other_energy",
-    "sensor.master_bath_water_heater_heat_loss_energy",
-    "sensor.master_bath_water_heater_shower_count",
-    "sensor.master_bath_water_heater_last_shower_water",
-    "sensor.master_bath_water_heater_last_shower_duration",
-    "sensor.master_bath_water_heater_heat_loss_rate",
-    "sensor.master_bath_water_heater_last_correction",
-    "number.master_bath_water_heater_thermostat_setting",
-    "number.master_bath_water_heater_shower_flow",
-    "number.master_bath_water_heater_shower_temperature",
-    "number.master_bath_water_heater_cold_water_temperature",
-]
+P = "master_bath_water_heater"
+ALWAYS = [f"water_heater.{P}", f"binary_sensor.{P}_hot_water_ready"] + [f"sensor.{P}_{k}" for k in (
+    "hot_water_remaining", "energy", "water_energy", "heat_loss_energy", "total_water")]
+SHOWERS = [f"event.{P}_shower"] + [f"sensor.{P}_{k}" for k in (
+    "shower_water", "other_water", "shower_energy", "other_energy", "shower_count", "last_shower_water",
+    "last_shower_duration", "shower_minutes_left")]
+EXPECTED = ALWAYS + SHOWERS
+HEATER = {"tank_volume": 35, "thermostat": 66, "thermostat_band": 0.244, "heat_loss": 1.8, "room_temperature": 30}
+WATER = {"cold_water_temperature": 30, "warm_water_temperature": 38}
+SHOWER = {"shower_flow": 9.5, "shortest_shower": 6}
 
 
 async def _plug(hass: HomeAssistant) -> None:
@@ -82,20 +70,20 @@ async def _record_week(hass: HomeAssistant, freezer) -> object:
     return h
 
 
-async def _setup(hass: HomeAssistant):
+async def _setup(hass: HomeAssistant, showers: bool = True, from_history: bool = True):
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert r["type"] is FlowResultType.FORM and r["step_id"] == "user"
-    r = await hass.config_entries.flow.async_configure(r["flow_id"], {
-        "switch_entity": SWITCH, "power_entity": POWER, "tank_volume": 35})
-    assert r["type"] is FlowResultType.FORM and r["step_id"] == "name"
-    assert r["data_schema"]({})["name"] == "Water Heater"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"switch_entity": SWITCH, "power_entity": POWER})
+    assert r["step_id"] == "name"
+    assert r["data_schema"]({})["name"] == "Water Heater"            # "Water Heater Switch" minus "Switch"
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Water Heater"})
-    assert r["type"] is FlowResultType.FORM and r["step_id"] == "settings"
-    r = await hass.config_entries.flow.async_configure(r["flow_id"], {
-        "thermostat": 66, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
-        "learn_from_history": True, "import_statistics": True})
-    assert r["type"] is FlowResultType.CREATE_ENTRY
-    assert r["title"] == "Water Heater"
+    assert r["step_id"] == "heater"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], HEATER)
+    assert r["step_id"] == "water"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {**WATER, "from_history": from_history})
+    assert r["step_id"] == "showers"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], SHOWER if showers else {})
+    assert r["type"] is FlowResultType.CREATE_ENTRY and r["title"] == "Water Heater"
     await hass.async_block_till_done()
     return r["result"]
 
@@ -163,31 +151,42 @@ async def test_water_heater_controls_switch_and_live_updates(recorder_mock, our_
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
-async def test_settings_number_changes_model(recorder_mock, our_integration, hass: HomeAssistant, freezer) -> None:
+async def test_configure_changes_settings_and_can_turn_showers_off(recorder_mock, our_integration, hass: HomeAssistant, freezer) -> None:
     await _plug(hass)
     await _record_week(hass, freezer)
     entry = await _setup(hass)
-    await hass.services.async_call("number", "set_value", {
-        "entity_id": "number.master_bath_water_heater_thermostat_setting", "value": 70}, blocking=True)
-    assert entry.runtime_data.model.settings.thermostat_c == 70
-    assert hass.states.get("water_heater.master_bath_water_heater").attributes["temperature"] == 70
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    assert r["step_id"] == "init"
+    # one shower field only: refused
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {
+        "switch_entity": SWITCH, "power_entity": POWER, **HEATER, "thermostat": 70, **WATER, "shower_flow": 9.5})
+    assert r["errors"] == {"base": "showers_incomplete"}
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {
+        "switch_entity": SWITCH, "power_entity": POWER, **HEATER, "thermostat": 70, **WATER})
+    assert r["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    rt = entry.runtime_data
+    assert rt.model.settings.thermostat_c == 70 and not rt.model.settings.showers_enabled
+    assert hass.states.get(f"water_heater.{P}").attributes["temperature"] == 70
+    ours = sorted(e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id))
+    assert ours == sorted(ALWAYS)                      # shower entities removed, nothing left behind
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
 async def test_switch_without_device_is_named_after_the_switch(recorder_mock, our_integration, hass: HomeAssistant) -> None:
-    hass.states.async_set("switch.loose", STATE_OFF, {"friendly_name": "Loose Heater"})
+    hass.states.async_set("switch.loose", STATE_OFF, {"friendly_name": "Loose Heater Plug"})
     hass.states.async_set(POWER, "0")
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    r = await hass.config_entries.flow.async_configure(r["flow_id"], {
-        "switch_entity": "switch.loose", "power_entity": POWER, "tank_volume": 35})
-    assert r["step_id"] == "name"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"switch_entity": "switch.loose", "power_entity": POWER})
+    assert r["data_schema"]({})["name"] == "Loose Heater"
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Loose Heater"})
-    r = await hass.config_entries.flow.async_configure(r["flow_id"], {
-        "thermostat": 65, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
-        "learn_from_history": False, "import_statistics": False})
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], HEATER)
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {**WATER, "from_history": False})
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
     assert r["type"] is FlowResultType.CREATE_ENTRY and r["title"] == "Loose Heater"
     await hass.async_block_till_done()
     assert hass.states.get("water_heater.loose_heater") is not None
+    assert hass.states.get("event.loose_heater_shower") is None          # showers off
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
@@ -211,16 +210,27 @@ async def test_follows_switch_rename(recorder_mock, our_integration, hass: HomeA
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
-async def test_migrates_v1_entry_without_energy_setting(recorder_mock, our_integration, hass: HomeAssistant) -> None:
+async def test_migrates_old_entry_with_learned_values(recorder_mock, our_integration, hass: HomeAssistant, hass_storage) -> None:
+    """A 0.1.x entry: number-entity values and learned values live in the saved model state."""
     await _plug(hass)
-    old = MockConfigEntry(domain=DOMAIN, version=1, title="Water Heater", data={
-        "switch_entity": SWITCH, "power_entity": POWER, "energy_entity": "sensor.x_energy", "tank_volume": 35,
-        "thermostat": 65, "shower_flow": 9.5, "shower_temperature": 38, "cold_water_temperature": 30,
-        "learn_from_history": False, "import_statistics": False})
+    old = MockConfigEntry(domain=DOMAIN, version=2, title="Water Heater", data={
+        "switch_entity": SWITCH, "power_entity": POWER, "tank_volume": 35, "thermostat": 65, "shower_flow": 9.5,
+        "shower_temperature": 38, "cold_water_temperature": 30, "learn_from_history": False, "import_statistics": True},
+        options={"power_entity": POWER, "tank_volume": 35, "shower_threshold": 0.35, "room_temperature": 30})
     old.add_to_hass(hass)
+    hass_storage[f"{DOMAIN}.{old.entry_id}"] = {"version": 1, "minor_version": 1, "key": f"{DOMAIN}.{old.entry_id}",
+        "data": {"model": {"settings": {"thermostat_c": 70.0, "shower_flow_lpm": 9.0, "shower_temp_c": 39.0,
+                                        "cold_temp_c": 29.0},
+                           "learned": {"band_kwh": 0.242, "loss_w_full": 72.0}}}}
     assert await hass.config_entries.async_setup(old.entry_id)
     await hass.async_block_till_done()
-    assert old.version == 2 and "energy_entity" not in old.data
+    d = old.data
+    assert old.version == 3 and old.options == {}
+    assert d["thermostat"] == 70.0 and d["shower_flow"] == 9.0 and d["warm_water_temperature"] == 39.0
+    assert d["cold_water_temperature"] == 29.0 and d["thermostat_band"] == 0.242
+    assert d["heat_loss"] == pytest.approx(72.0 / 40, abs=0.01) and d["shortest_shower"] == 6.0
+    for gone in ("shower_temperature", "learn_from_history", "import_statistics", "shower_threshold"):
+        assert gone not in d
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
@@ -258,11 +268,11 @@ async def test_retired_entities_are_removed(recorder_mock, our_integration, hass
     await _record_week(hass, freezer)
     entry = await _setup(hass)
     reg = er.async_get(hass)
-    reg.async_get_or_create("sensor", DOMAIN, f"{entry.entry_id}_tank_temperature", config_entry=entry,
-                            suggested_object_id="master_bath_water_heater_tank_temperature")
-    assert reg.async_get("sensor.master_bath_water_heater_tank_temperature")
+    reg.async_get_or_create("number", DOMAIN, f"{entry.entry_id}_thermostat_setting", config_entry=entry,
+                            suggested_object_id="master_bath_water_heater_thermostat_setting")
+    assert reg.async_get("number.master_bath_water_heater_thermostat_setting")
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
-    assert reg.async_get("sensor.master_bath_water_heater_tank_temperature") is None
+    assert reg.async_get("number.master_bath_water_heater_thermostat_setting") is None
     assert hass.config_entries.async_get_entry(entry.entry_id) is not None
     assert reg.async_get("water_heater.master_bath_water_heater")

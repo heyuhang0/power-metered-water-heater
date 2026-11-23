@@ -11,7 +11,8 @@ from .entity import HeaterEntity
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
-    async_add_entities([ShowerEvent(entry.runtime_data, "shower")])
+    if entry.runtime_data.model.settings.showers_enabled:
+        async_add_entities([ShowerEvent(entry.runtime_data, "shower")])
 
 
 class ShowerEvent(HeaterEntity, EventEntity):

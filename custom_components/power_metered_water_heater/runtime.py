@@ -20,11 +20,9 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_COLD_TEMP, CONF_IMPORT_STATISTICS, CONF_LEARN_HISTORY, CONF_POWER, CONF_ROOM_TEMP,
-    CONF_SHOWER_FLOW, CONF_SHOWER_TEMP, CONF_SHOWER_THRESHOLD, CONF_SWITCH, CONF_TANK_VOLUME,
-    CONF_THERMOSTAT, DEFAULT_COLD_TEMP, DEFAULT_ROOM_TEMP, DEFAULT_SHOWER_FLOW, DEFAULT_SHOWER_TEMP,
-    DEFAULT_SHOWER_THRESHOLD, DEFAULT_TANK_VOLUME, DEFAULT_THERMOSTAT, DOMAIN, HISTORY_DAYS,
-    SAVE_DELAY_S, TICK_S,
+    CONF_BAND, CONF_COLD_TEMP, CONF_FROM_HISTORY, CONF_HEAT_LOSS, CONF_POWER, CONF_ROOM_TEMP,
+    CONF_SHORTEST_SHOWER, CONF_SHOWER_FLOW, CONF_SWITCH, CONF_TANK_VOLUME, CONF_THERMOSTAT,
+    CONF_WARM_TEMP, DOMAIN, HISTORY_DAYS, SAVE_DELAY_S, TICK_S,
 )
 from .model import HeaterModel, Settings, replay
 
@@ -34,6 +32,8 @@ BAD = (None, STATE_UNKNOWN, STATE_UNAVAILABLE)
 
 # sensor key -> (unit, unit_class, value as the sensor reports it)
 STAT_TOTALS: dict[str, tuple[str | None, str | None, Callable[[HeaterModel], float]]] = {
+    "energy": ("kWh", "energy", lambda m: round(m.totals.energy_kwh, 4)),
+    "water_energy": ("kWh", "energy", lambda m: round(m.totals.water_kwh, 4)),
     "total_water": ("L", "volume", lambda m: round(m.totals.total_l, 2)),
     "shower_water": ("L", "volume", lambda m: round(m.totals.shower_l, 2)),
     "other_water": ("L", "volume", lambda m: round(m.totals.other_l, 2)),
@@ -44,16 +44,24 @@ STAT_TOTALS: dict[str, tuple[str | None, str | None, Callable[[HeaterModel], flo
 }
 
 
+SHOWER_STATS = ("shower_water", "other_water", "shower_energy", "other_energy", "shower_count")
+
+
+def entry_config(entry: ConfigEntry) -> dict[str, Any]:
+    """The current configuration: Configure (options) replaces setup's values as a whole."""
+    return {**entry.data, **entry.options} if not entry.options else {
+        CONF_FROM_HISTORY: entry.data.get(CONF_FROM_HISTORY, True), **entry.options}
+
+
 def settings_from_entry(entry: ConfigEntry) -> Settings:
-    c = {**entry.data, **entry.options}
+    c = entry_config(entry)
+    opt = lambda k: float(c[k]) if c.get(k) else None  # noqa: E731
     return Settings(
-        tank_volume_l=float(c.get(CONF_TANK_VOLUME, DEFAULT_TANK_VOLUME)),
-        thermostat_c=float(c.get(CONF_THERMOSTAT, DEFAULT_THERMOSTAT)),
-        shower_flow_lpm=float(c.get(CONF_SHOWER_FLOW, DEFAULT_SHOWER_FLOW)),
-        shower_temp_c=float(c.get(CONF_SHOWER_TEMP, DEFAULT_SHOWER_TEMP)),
-        cold_temp_c=float(c.get(CONF_COLD_TEMP, DEFAULT_COLD_TEMP)),
-        room_temp_c=float(c.get(CONF_ROOM_TEMP, DEFAULT_ROOM_TEMP)),
-        shower_threshold_kwh=float(c.get(CONF_SHOWER_THRESHOLD, DEFAULT_SHOWER_THRESHOLD)),
+        tank_volume_l=float(c[CONF_TANK_VOLUME]), thermostat_c=float(c[CONF_THERMOSTAT]),
+        band_kwh=float(c[CONF_BAND]), heat_loss_w_per_k=float(c[CONF_HEAT_LOSS]),
+        room_temp_c=float(c[CONF_ROOM_TEMP]), cold_temp_c=float(c[CONF_COLD_TEMP]),
+        warm_temp_c=float(c[CONF_WARM_TEMP]),
+        shower_flow_lpm=opt(CONF_SHOWER_FLOW), shortest_shower_min=opt(CONF_SHORTEST_SHOWER),
     )
 
 
@@ -79,7 +87,7 @@ class HeaterRuntime:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
-        cfg = {**entry.data, **entry.options}
+        cfg = entry_config(entry)
         self.switch_id: str = cfg[CONF_SWITCH]
         self.power_id: str = cfg[CONF_POWER]
         self.device = device_helper.async_entity_id_to_device(hass, self.switch_id)
@@ -97,20 +105,15 @@ class HeaterRuntime:
     # -------------------------------------------------------------- lifecycle
     async def async_start(self) -> None:
         stored = await self._store.async_load()
-        live_settings = self.model.settings
+        settings = self.model.settings
         if stored and stored.get("model"):
-            self.model = HeaterModel.from_dict(stored["model"])
+            self.model = HeaterModel.from_dict(stored["model"], settings)
             self.stats_imported = bool(stored.get("stats_imported"))
-            # setup-only settings (volume, threshold, room) follow the config entry
-            s = self.model.settings
-            s.tank_volume_l = live_settings.tank_volume_l
-            s.room_temp_c = live_settings.room_temp_c
-            s.shower_threshold_kwh = live_settings.shower_threshold_kwh
             start = dt_util.utc_from_timestamp(self.model.t) if self.model.t else None
         else:
             self.first_setup = True
-            learn = {**self.entry.data, **self.entry.options}.get(CONF_LEARN_HISTORY, True)
-            start = dt_util.utcnow() - dt.timedelta(days=HISTORY_DAYS) if learn else None
+            replay_history = entry_config(self.entry).get(CONF_FROM_HISTORY, True)
+            start = dt_util.utcnow() - dt.timedelta(days=HISTORY_DAYS) if replay_history else None
         self.model.on_shower.append(self._on_shower)
         # subscribe first, buffer live events while history is replayed
         self._unsubs.append(async_track_state_change_event(
@@ -164,7 +167,7 @@ class HeaterRuntime:
         """Backfill hourly statistics from the first-setup replay, once per entry."""
         if self.stats_imported or not self._snapshots:
             return
-        if not {**self.entry.data, **self.entry.options}.get(CONF_IMPORT_STATISTICS, True):
+        if not entry_config(self.entry).get(CONF_FROM_HISTORY, True):
             return
         reg = er.async_get(self.hass)
         now = dt_util.utcnow().timestamp()
@@ -173,6 +176,8 @@ class HeaterRuntime:
         recorder = get_instance(self.hass)
         done = 0
         for key, (unit, unit_class, value_fn) in STAT_TOTALS.items():
+            if key in SHOWER_STATS and not self.model.settings.showers_enabled:
+                continue
             entity_id = reg.async_get_entity_id("sensor", DOMAIN, f"{self.entry.entry_id}_{key}")
             if entity_id is None:
                 continue
@@ -239,14 +244,6 @@ class HeaterRuntime:
             return                            # no events for showers found while replaying history
         for cb in self._shower_listeners:
             cb(t, litres, minutes)
-
-    # ---------------------------------------------------------------- settings
-    @callback
-    def set_setting(self, key: str, value: float) -> None:
-        s = self.model.settings
-        setattr(s, key, float(value))
-        self._notify()
-        self._schedule_save()
 
     # ---------------------------------------------------------------- plumbing
     @callback

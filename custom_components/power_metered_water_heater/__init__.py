@@ -8,17 +8,20 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device import async_entity_id_to_device_id
 from homeassistant.helpers.helper_integration import async_handle_source_entity_changes
 
-from .const import CONF_POWER, CONF_SWITCH, LEGACY_CONF_ENERGY
+from .const import (
+    CONF_BAND, CONF_FROM_HISTORY, CONF_HEAT_LOSS, CONF_POWER, CONF_ROOM_TEMP, CONF_SHORTEST_SHOWER, CONF_SHOWER_FLOW,
+    CONF_SWITCH, CONF_WARM_TEMP,
+)
 from .runtime import HeaterRuntime
 
-PLATFORMS = [Platform.WATER_HEATER, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.EVENT, Platform.NUMBER]
+PLATFORMS = [Platform.WATER_HEATER, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.EVENT]
 
 type HeaterConfigEntry = ConfigEntry[HeaterRuntime]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bool:
-    _remove_retired_entities(hass, entry)
     runtime = HeaterRuntime(hass, entry)
+    _remove_retired_entities(hass, entry, runtime.model.settings.showers_enabled)
     await runtime.async_start()
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -28,16 +31,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bo
     return True
 
 
-def _remove_retired_entities(hass: HomeAssistant, entry: HeaterConfigEntry) -> None:
-    """Remove registry entries for entities this version no longer provides.
+def _remove_retired_entities(hass: HomeAssistant, entry: HeaterConfigEntry, showers: bool) -> None:
+    """Remove registry entries for entities not provided with this version and these settings.
 
     Otherwise they linger as "no longer provided", and deleting one in the UI
     deletes the whole helper.
     """
-    from .number import NUMBERS
-    from .sensor import SENSORS
+    from .sensor import current_keys
 
-    keys = {d.key for d in SENSORS} | {d.key for d in NUMBERS} | {"hot_water_ready", "shower", "water_heater"}
+    keys = current_keys(showers)
     reg = er.async_get(hass)
     prefix = f"{entry.entry_id}_"
     for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
@@ -77,11 +79,43 @@ def _track_source_renames(hass: HomeAssistant, entry: HeaterConfigEntry) -> None
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: HeaterConfigEntry) -> bool:
-    """v1 -> v2: drop the unused energy sensor setting."""
+    """v1 -> v2: drop the unused energy sensor. v2 -> v3: settings for the no-learning model."""
+    data, options = dict(entry.data), dict(entry.options)
     if entry.version == 1:
-        data = {k: v for k, v in entry.data.items() if k != LEGACY_CONF_ENERGY}
-        options = {k: v for k, v in entry.options.items() if k != LEGACY_CONF_ENERGY}
-        hass.config_entries.async_update_entry(entry, data=data, options=options, version=2)
+        data.pop("energy_entity", None)
+        options.pop("energy_entity", None)
+    if entry.version < 3:
+        old = {**data, **options}          # the old options flow only overrode some keys
+        # the old number entities kept their values in the saved model state, not the entry
+        from homeassistant.helpers.storage import Store
+
+        from .const import DOMAIN
+        from .runtime import STORE_VERSION
+
+        stored = await Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_load()
+        numbers = ((stored or {}).get("model") or {}).get("settings") or {}
+        for key, attr in (("thermostat", "thermostat_c"), ("shower_flow", "shower_flow_lpm"),
+                          ("shower_temperature", "shower_temp_c"), ("cold_water_temperature", "cold_temp_c")):
+            if numbers.get(attr) is not None:
+                old[key] = numbers[attr]
+        learned = ((stored or {}).get("model") or {}).get("learned") or {}
+        thermostat, room = float(old.get("thermostat", 65.0)), float(old.get(CONF_ROOM_TEMP, 30.0))
+        data = {
+            CONF_SWITCH: old[CONF_SWITCH], CONF_POWER: old[CONF_POWER],
+            "tank_volume": old.get("tank_volume", 35.0), "thermostat": thermostat,
+            # what the old version had learned on the device; review them in Configure
+            CONF_BAND: round(learned.get("band_kwh", 0.24), 3),
+            CONF_HEAT_LOSS: round(learned.get("loss_w_full", 68.0) / max(1.0, thermostat - room), 2),
+            CONF_ROOM_TEMP: room,
+            "cold_water_temperature": old.get("cold_water_temperature", 30.0),
+            CONF_WARM_TEMP: old.get("shower_temperature", 38.0),
+            CONF_FROM_HISTORY: old.get("learn_from_history", True),
+        }
+        if old.get(CONF_SHOWER_FLOW):
+            data[CONF_SHOWER_FLOW] = old[CONF_SHOWER_FLOW]
+            data[CONF_SHORTEST_SHOWER] = 6.0
+        options = {}
+    hass.config_entries.async_update_entry(entry, data=data, options=options, version=3)
     return True
 
 

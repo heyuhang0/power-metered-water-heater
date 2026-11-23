@@ -1,6 +1,6 @@
 [project]
 name = "power-metered-water-heater"
-version = "0.1.7"
+version = "0.2.0"
 description = "Home Assistant helper: a storage water heater on a power-metering switch or smart plug, with tank state and hot water use worked out from its power"
 readme = "README.md"
 license = { text = "MIT" }

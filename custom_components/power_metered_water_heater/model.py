@@ -1,29 +1,29 @@
 """Storage water heater model driven only by a metering switch's on/off state and power.
 
 Pure Python (no Home Assistant imports) so it can be replayed and tested offline.
+Nothing is learned: every parameter is a setting, chosen once from past data or a
+measurement. The only live inputs are the switch state and its power.
 
 How it works
 ------------
 The tank's *heat deficit* D (kWh below full) is tracked continuously:
 
-* D grows with standby heat loss (Newton cooling towards room temperature)
-  and with hot water use.
-* D shrinks with the heater energy the switch measures.
+* D grows with standby heat loss, heat_loss_w_per_k x (tank - room), and with
+  warm water use.
+* D shrinks with the heat the switch measures.
 * When the thermostat stops a reheat while the switch is still on, the tank is
-  full: D = 0. These *anchors* make the accounting exact. Between two anchors,
-  water energy = heater energy - modelled heat loss.
+  full: D = 0. These *anchors* make the accounting exact.
 
-Water energy is converted to litres of mixed water at the shower temperature.
-A reheat whose water energy exceeds ``shower_threshold_kwh`` is a shower.
+Booking: whenever a reheat stops (tank full, or cut short by the switch), its
+measured heat is booked. The water it proves goes to water, the rest to heat
+loss; water the tank still lacks is booked when heat replaces it. So whenever no
+reheat is running, water energy + heat loss = the measured energy.
 
-Energy: when a reheat ends (tank full, or cut short by the switch) the heat the
-switch metered so far is split into water (shower / other) and heat loss. So
-whenever no reheat is running, the three parts add up to what the switch measured.
+Water energy is converted to litres at the warm water temperature. With showers
+enabled, water of at least ``shortest_shower_min`` (at the shower flow) is a shower.
 
-Live behaviour: during a reheat only the guaranteed minimum is booked, so the
-running totals never have to go down. Once that minimum passes the shower
-threshold the reheat is known to be a shower and its litres are booked live.
-Everything else is settled when the reheat ends.
+Live behaviour: during a reheat only the guaranteed minimum is booked, so running
+totals never go down.
 """
 from __future__ import annotations
 
@@ -35,21 +35,24 @@ HEATING_W = 500.0            # power above this = element on
 END_CONFIRM_S = 30.0         # wait this long after a power drop before deciding why it stopped
 STEP_S = 60.0                # integration step
 BAND_MARGIN_KWH = 0.03       # slack on the thermostat band before counting a draw
-FOLLOWUP_S = 2 * 3600        # quick band cycle after a big reheat = tank was not fully mixed
-QUIET_MIN_S = 3 * 3600       # idle gap long enough to learn heat loss from
+MIXING_WINDOW_S = 4 * 3600   # first small reheat this soon after a big one = tank was not fully mixed
+BIG_REHEAT_KWH = 0.3
 NOISE_KWH = 0.05             # usage below this is model noise
+TYPICAL_SHOWER_MIN = 12.0    # live tank guess during a shower; cap for a cut-short shower's remainder
 MAX_MINUTES_LEFT = 240
 
 
 @dataclass
 class Settings:
-    tank_volume_l: float = 35.0
-    thermostat_c: float = 65.0
-    shower_flow_lpm: float = 9.5
-    shower_temp_c: float = 38.0
-    cold_temp_c: float = 30.0
-    room_temp_c: float = 30.0
-    shower_threshold_kwh: float = 0.35
+    tank_volume_l: float
+    thermostat_c: float
+    band_kwh: float                     # energy of one normal small reheat
+    heat_loss_w_per_k: float            # standby loss per degree between tank and room
+    room_temp_c: float
+    cold_temp_c: float
+    warm_temp_c: float                  # all water is counted as litres at this temperature
+    shower_flow_lpm: float | None = None
+    shortest_shower_min: float | None = None
 
     @property
     def capacity_kwh_per_k(self) -> float:
@@ -57,20 +60,19 @@ class Settings:
 
     @property
     def kwh_per_litre(self) -> float:
-        return WATER_KJ_PER_L_K * max(0.5, self.shower_temp_c - self.cold_temp_c) / 3600
+        return WATER_KJ_PER_L_K * max(0.5, self.warm_temp_c - self.cold_temp_c) / 3600
 
     @property
-    def shower_kw(self) -> float:
-        return self.shower_flow_lpm * self.kwh_per_litre * 60
+    def showers_enabled(self) -> bool:
+        return bool(self.shower_flow_lpm) and bool(self.shortest_shower_min)
 
+    @property
+    def shower_kw(self) -> float | None:
+        return self.shower_flow_lpm * self.kwh_per_litre * 60 if self.showers_enabled else None
 
-@dataclass
-class Learned:
-    element_kw: float = 2.95
-    band_kwh: float = 0.24
-    loss_w_full: float = 68.0        # heat loss with the tank full
-    typical_shower_min: float = 12.0
-    quiet_cycles: int = 0
+    @property
+    def shower_threshold_kwh(self) -> float | None:
+        return self.shortest_shower_min / 60 * self.shower_kw if self.showers_enabled else None
 
 
 @dataclass
@@ -80,11 +82,16 @@ class Totals:
     shower_kwh: float = 0.0
     other_kwh: float = 0.0
     loss_kwh: float = 0.0
+    energy_kwh: float = 0.0              # all measured heat since tracking began
     shower_count: int = 0
 
     @property
     def total_l(self) -> float:
         return self.shower_l + self.other_l
+
+    @property
+    def water_kwh(self) -> float:
+        return self.shower_kwh + self.other_kwh
 
 
 @dataclass
@@ -105,14 +112,15 @@ class _Segment:
     start: float
     heat: float = 0.0
     loss: float = 0.0
-    classified: float = 0.0  # water energy already classified (cut-short reheats)
-    booked: float = 0.0      # water energy already added to totals
+    classified: float = 0.0       # water energy already classified (cut-short reheats)
+    booked: float = 0.0           # water energy already added to totals
     was_off: bool = False
     bursts: int = 0
     cut_shower_kwh: float = 0.0   # shower credited from a reheat the switch cut short
     water_booked: float = 0.0     # water energy added to the totals in this segment (after debts)
     loss_prebooked: float = 0.0   # heat loss already booked live by versions before 0.1.4
     loss_settled: float = 0.0     # heat booked as loss at switch-offs within this segment
+    pending_kwh: float = 0.0      # water from a cut-short reheat, too small to call yet: classified with the rest
 
 
 ShowerCallback = Callable[[float, float, float], None]   # (time, litres, minutes)
@@ -120,25 +128,23 @@ ShowerCallback = Callable[[float, float, float], None]   # (time, litres, minute
 
 @dataclass
 class HeaterModel:
-    settings: Settings = field(default_factory=Settings)
-    learned: Learned = field(default_factory=Learned)
+    settings: Settings
     totals: Totals = field(default_factory=Totals)
     t: float | None = None
     switch_on: bool = False
     power_w: float = 0.0
+    heating_kw: float | None = None       # element power seen in the latest reheat
     deficit: float | None = None          # None until the first full reheat
     on_since: float | None = None
     full_since_on: bool = False
     last_shower_l: float | None = None
     last_shower_min: float | None = None
-    last_correction_l: float | None = None
     _burst: _Burst | None = None
     _seg: _Segment | None = None
     _end_pending: float | None = None
     _prev_big: dict | None = None
     _water_debt: float = 0.0
     _loss_debt: float = 0.0
-    _heat_w_ewma: float | None = None
 
     def __post_init__(self) -> None:
         self.on_shower: list[ShowerCallback] = []
@@ -204,25 +210,21 @@ class HeaterModel:
         if tt is None:
             return None
         s = self.settings
-        span = s.thermostat_c - s.shower_temp_c
-        return max(0.0, min(100.0, (tt - s.shower_temp_c) / span * 100)) if span > 0 else 0.0
+        span = s.thermostat_c - s.warm_temp_c
+        return max(0.0, min(100.0, (tt - s.warm_temp_c) / span * 100)) if span > 0 else 0.0
 
     @property
     def shower_minutes_left(self) -> float | None:
+        """Shower time from now; with the switch on the element helps (the thermostat will call)."""
         tt = self.tank_temp_c
-        if tt is None:
-            return None
         s = self.settings
-        stored = max(0.0, s.capacity_kwh_per_k * (tt - s.shower_temp_c))
-        net = s.shower_kw - (self.learned.element_kw if self.switch_on else 0.0)
+        if tt is None or not s.showers_enabled:
+            return None
+        stored = max(0.0, s.capacity_kwh_per_k * (tt - s.warm_temp_c))
+        net = s.shower_kw - ((self.heating_kw or 0.0) if self.switch_on else 0.0)
         if net <= 0:
             return float(MAX_MINUTES_LEFT)
         return min(float(MAX_MINUTES_LEFT), stored / net * 60)
-
-    @property
-    def heat_loss_w(self) -> float | None:
-        tt = self.tank_temp_c
-        return None if tt is None else max(0.0, self._ua() * (tt - self.settings.room_temp_c))
 
     @property
     def hot_water_ready(self) -> bool:
@@ -233,60 +235,59 @@ class HeaterModel:
         return self.power_w > HEATING_W
 
     # --------------------------------------------------------------- internals
-    def _ua(self) -> float:
-        s = self.settings
-        return self.learned.loss_w_full / max(1.0, s.thermostat_c - s.room_temp_c)
-
     def _step(self, t: float, dt_h: float) -> None:
-        s, ln = self.settings, self.learned
+        s = self.settings
         p_kw = self.power_w / 1000 if self.power_w > HEATING_W else 0.0
         if self.deficit is not None:
             tt = self.tank_temp_c
-            loss = self._ua() * (tt - s.room_temp_c) / 1000 * dt_h if tt is not None else 0.0
-            loss = max(0.0, loss)
+            loss = max(0.0, s.heat_loss_w_per_k * (tt - s.room_temp_c) / 1000 * dt_h) if tt is not None else 0.0
             self.deficit += loss
             if self._seg is not None:
                 self._seg.loss += loss
         if p_kw <= 0 or self._burst is None:
             return
+        self.heating_kw = p_kw
         b = self._burst
         heat = p_kw * dt_h
         b.heat += heat
         if self._seg is not None:
             self._seg.heat += heat
+            self.totals.energy_kwh += heat
         if self.deficit is not None:
             self.deficit = max(0.0, self.deficit - heat)
-        self._heat_w_ewma = self.power_w if self._heat_w_ewma is None else 0.98 * self._heat_w_ewma + 0.02 * self.power_w
-        ln.element_kw = self._heat_w_ewma / 1000
         if self.deficit is None or self._seg is None:
             return
         # guaranteed minimum water energy drawn during this reheat
-        lb = max(0.0, b.heat - b.d0 - BAND_MARGIN_KWH)
-        b.lb = max(b.lb, lb)
-        if not b.shower_live and b.lb >= s.shower_threshold_kwh:
-            b.shower_live = True
-        if b.shower_live and b.lb > b.booked:
-            self._book_water("shower", b.lb - b.booked)
+        b.lb = max(b.lb, b.heat - b.d0 - BAND_MARGIN_KWH)
+        if s.showers_enabled:
+            if not b.shower_live and b.lb >= s.shower_threshold_kwh:
+                b.shower_live = True
+            live_kind = "shower" if b.shower_live else None
+        else:
+            live_kind = "other"            # no showers: all water is one total, booked live
+        if live_kind and b.lb > b.booked:
+            self._book_water(live_kind, b.lb - b.booked)
             self._seg.booked += b.lb - b.booked
             b.booked = b.lb
-        # best guess for tank state: assume an ongoing shower once a draw is evident
-        elapsed_min = (t - b.start) / 60 + dt_h * 60
-        if b.early or b.heat > b.d0 + BAND_MARGIN_KWH:
-            mins = max(b.lb / s.shower_kw * 60, min(elapsed_min, ln.typical_shower_min))
-            best = mins / 60 * s.shower_kw
-            if best > b.best:
-                self.deficit += best - b.best
-                b.best = best
+        # tank state: at least the proven draw has left the tank; with showers enabled,
+        # assume an ongoing shower once a draw is evident
+        best = b.lb
+        if s.showers_enabled and (b.early or b.heat > b.d0 + BAND_MARGIN_KWH):
+            elapsed_min = (t - b.start) / 60 + dt_h * 60
+            best = max(best, min(elapsed_min, TYPICAL_SHOWER_MIN) / 60 * s.shower_kw)
+        if best > b.best:
+            self.deficit += best - b.best
+            b.best = best
 
     def _start_burst(self, t: float) -> None:
-        ln = self.learned
+        band = self.settings.band_kwh
         after_on = self.on_since is not None and t - self.on_since <= 120
         d = self.deficit if self.deficit is not None else 0.0
-        early = (not after_on) and self.deficit is not None and d < ln.band_kwh * 0.8
-        d0 = d if after_on else max(d, ln.band_kwh)
-        if not after_on and self.deficit is not None and d < ln.band_kwh:
+        early = (not after_on) and self.deficit is not None and d < band * 0.8
+        d0 = d if after_on else max(d, band)
+        if not after_on and self.deficit is not None and d < band:
             # the thermostat fired: the tank is one band down whatever we predicted
-            self.deficit = ln.band_kwh
+            self.deficit = band
         self._burst = _Burst(start=t, d0=d0, after_on=after_on, early=early)
         if self._seg is not None:
             self._seg.bursts += 1
@@ -306,47 +307,49 @@ class HeaterModel:
             return
         if seg is None:
             seg = self._seg = _Segment(start=b.start)
+        s = self.settings
         if not anchor:
-            # reheat cut short by the switch: credit this reheat's own draw now
+            # reheat cut short by the switch: credit the water this reheat proves
             if b.early or b.after_on or b.shower_live:
                 u = max(0.0, b.heat - b.d0)
                 if u >= NOISE_KWH:
-                    kind = self._classify(u, t_end, b)
-                    if kind == "shower":
-                        seg.cut_shower_kwh += u
-                    extra = max(0.0, u - b.booked)
-                    self._book_water(kind, extra)
-                    seg.booked += extra
-                    seg.classified += u
+                    if s.showers_enabled and not b.shower_live and u < s.shower_threshold_kwh:
+                        # not provably a shower yet: it is part of the water found at the next
+                        # full tank and classified with it; until then keep it out of heat loss
+                        seg.pending_kwh += u
+                    else:
+                        kind = self._classify(u, t_end, b)
+                        if kind == "shower":
+                            seg.cut_shower_kwh += u
+                        extra = max(0.0, u - b.booked)
+                        self._book_water(kind, extra)
+                        seg.booked += extra
+                        seg.classified += u
                     self.deficit = max(0.0, self.deficit - b.best + u)
-            # the switch metered this heat now: book it now, so the parts match the meter
+            # the switch measured this heat now: book it now, so the parts match the meter
             self._settle_loss(seg)
             return
-        s, ln = self.settings, self.learned
         u = seg.heat - seg.loss - seg.classified
         live_unclassified = seg.booked - seg.classified
-        quiet = (seg.bursts == 1 and not seg.was_off and b.heat < 0.3
-                 and not b.early and t_end - seg.start >= QUIET_MIN_S)
-        follow = (self._prev_big is not None and t_end - self._prev_big["end"] < FOLLOWUP_S + 3600
-                  and b.start - self._prev_big["end"] < FOLLOWUP_S and b.heat < 0.3 and not seg.was_off)
-        if follow and self._prev_big["kind"] != "shower":
-            # tank was not fully mixed after a reheat from cold: this is heat loss
-            self.last_correction_l = 0.0
+        mixing = (self._prev_big is not None and b.start - self._prev_big["end"] < MIXING_WINDOW_S
+                  and b.heat < BIG_REHEAT_KWH and not seg.was_off and not seg.pending_kwh)
+        if mixing and self._prev_big["kind"] != "shower":
+            # the tank was not fully mixed after a reheat from cold: this is heat loss
             self._prev_big = None
-        elif follow:
+        elif mixing:
+            # ... after a shower: the shower drew more than its reheat showed
             extra = max(0.0, u - live_unclassified)
             self._book_water("shower", extra)
-            add_l = extra / s.kwh_per_litre
             if self.last_shower_l is not None:
-                self.last_shower_l += add_l
+                self.last_shower_l += extra / s.kwh_per_litre
                 self.last_shower_min = (self.last_shower_min or 0) + extra / s.shower_kw * 60
-            self.last_correction_l = add_l
             self._prev_big = None
         else:
-            uu = max(0.0, u)
-            if seg.cut_shower_kwh > 0 and uu > 0:
+            uu = max(0.0, u)                  # includes water held from a cut-short reheat
+            seg.pending_kwh = 0.0
+            if seg.cut_shower_kwh > 0 and uu > 0 and s.showers_enabled:
                 # the heat still missing from a cut-short shower shows up in this reheat
-                room = max(0.0, ln.typical_shower_min / 60 * s.shower_kw - seg.cut_shower_kwh)
+                room = max(0.0, TYPICAL_SHOWER_MIN / 60 * s.shower_kw - seg.cut_shower_kwh)
                 carry = min(uu, room)
                 if carry > 0:
                     self._book_water("shower", max(0.0, carry - max(0.0, live_unclassified)))
@@ -360,26 +363,22 @@ class HeaterModel:
                 self._book_water(kind or "other", extra)
             elif extra < 0:
                 self._water_debt += -extra
-            self.last_correction_l = (uu - live_unclassified) / s.kwh_per_litre
             self._prev_big = ({"end": t_end, "kind": kind}
-                              if (kind == "shower" or b.heat > 0.3) else None)
-        if quiet and not follow:
-            self._learn_quiet(b.heat, (t_end - seg.start) / 3600)
+                              if (kind == "shower" or b.heat > BIG_REHEAT_KWH) else None)
         # the heater has now replaced everything the tank lost: whatever this segment's
-        # metered heat did not put into water is heat loss, so the parts add up to the meter
+        # measured heat did not put into water is heat loss, so the parts add up to the meter
         self._settle_loss(seg)
         self.deficit = 0.0
         self._seg = _Segment(start=t_end)
         self._mark_full()
 
     def _classify(self, u: float, t: float, b: _Burst) -> str | None:
-        s, ln = self.settings, self.learned
-        if b.shower_live or u >= s.shower_threshold_kwh:
+        s = self.settings
+        if s.showers_enabled and (b.shower_live or u >= s.shower_threshold_kwh):
             litres = u / s.kwh_per_litre
             minutes = u / s.shower_kw * 60
             self.totals.shower_count += 1
             self.last_shower_l, self.last_shower_min = litres, minutes
-            ln.typical_shower_min = 0.8 * ln.typical_shower_min + 0.2 * minutes
             for cb in self.on_shower:
                 cb(t, litres, minutes)
             return "shower"
@@ -414,24 +413,13 @@ class HeaterModel:
         self.totals.loss_kwh += kwh
 
     def _settle_loss(self, seg: _Segment) -> None:
-        """Book as heat loss the segment's metered heat not yet booked as water or loss."""
-        x = seg.heat - seg.water_booked - seg.loss_prebooked - seg.loss_settled
+        """Book as heat loss the segment's measured heat not yet booked as water or loss."""
+        x = seg.heat - seg.water_booked - seg.loss_prebooked - seg.loss_settled - seg.pending_kwh
         if x < 0:
             self._loss_debt += -x
         else:
             self._book_loss(x)
         seg.loss_settled += x
-
-    def _learn_quiet(self, band_heat: float, hours: float) -> None:
-        s, ln = self.settings, self.learned
-        c = s.capacity_kwh_per_k
-        avg_temp = s.thermostat_c - band_heat / c / 2
-        w = band_heat / hours * 1000
-        w_full = w * (s.thermostat_c - s.room_temp_c) / max(1.0, avg_temp - s.room_temp_c)
-        a = 0.3 if ln.quiet_cycles < 5 else 0.1
-        ln.loss_w_full = (1 - a) * ln.loss_w_full + a * w_full
-        ln.band_kwh = (1 - a) * ln.band_kwh + a * band_heat
-        ln.quiet_cycles += 1
 
     def _mark_full(self) -> None:
         if self.switch_on and self.on_since is not None:
@@ -442,23 +430,30 @@ class HeaterModel:
         if (self.switch_on and not self.full_since_on and self.on_since is not None
                 and self._burst is None and self.deficit is not None
                 and self.t is not None and self.t - self.on_since >= 300
-                and self.deficit < self.learned.band_kwh):
+                and self.deficit < self.settings.band_kwh):
             self.full_since_on = True
 
     # ------------------------------------------------------------ persistence
     def to_dict(self) -> dict[str, Any]:
-        d = {k: v for k, v in self.__dict__.items() if k != "on_shower"}
-        for k in ("settings", "learned", "totals"):
-            d[k] = asdict(d[k])
+        """Model state. Settings are not stored: they come from the config entry."""
+        d = {k: v for k, v in self.__dict__.items() if k not in ("on_shower", "settings")}
+        d["totals"] = asdict(self.totals)
         d["_burst"] = asdict(self._burst) if self._burst else None
         d["_seg"] = asdict(self._seg) if self._seg else None
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "HeaterModel":
+    def from_dict(cls, d: dict[str, Any], settings: Settings) -> "HeaterModel":
         d = dict(d)
-        m = cls(settings=Settings(**d.pop("settings")), learned=Learned(**d.pop("learned")),
-                totals=Totals(**d.pop("totals")))
+        d.pop("settings", None)
+        d.pop("learned", None)                       # saved by <= 0.1.x
+        d.pop("last_correction_l", None)
+        d.pop("_heat_w_ewma", None)
+        totals = d.pop("totals", None) or {}
+        if "energy_kwh" not in totals:
+            # saved by <= 0.1.x: start the energy total where the parts are
+            totals = {**totals, "energy_kwh": sum(totals.get(k, 0.0) for k in ("shower_kwh", "other_kwh", "loss_kwh"))}
+        m = cls(settings=settings, totals=Totals(**totals))
         b, sg = d.pop("_burst", None), d.pop("_seg", None)
         for k, v in d.items():
             if hasattr(m, k):

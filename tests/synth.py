@@ -105,3 +105,24 @@ def week(seed_offset: float = 0.0) -> TrueHeater:
             h.run(13 * H - (h.t % (24 * H)) % H)
         h.run(max(0.0, 24 * H * (day + 1) - h.t - 1))
     return h
+
+
+def true_settings(h: TrueHeater, showers: bool = True):
+    """The model settings that describe this synthetic heater exactly."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "custom_components" / "power_metered_water_heater"))
+    from model import Settings
+    return Settings(tank_volume_l=h.volume_l, thermostat_c=h.setpoint_c, band_kwh=h.band_k * h.c,
+                    heat_loss_w_per_k=h.ua_w_per_k, room_temp_c=h.room_c, cold_temp_c=h.cold_c,
+                    warm_temp_c=h.mix_c, shower_flow_lpm=9.5 if showers else None,
+                    shortest_shower_min=6.0 if showers else None)
+
+
+def as_fixture(h: TrueHeater, start: float = 1_790_000_000.0) -> dict:
+    """The synthetic events in fetch_history.py's fixture format (for tools/analyze.py)."""
+    import datetime as dt
+    iso = lambda t: dt.datetime.fromtimestamp(start + t, dt.timezone.utc).isoformat()  # noqa: E731
+    sw = [[iso(t), "on" if v else "off"] for t, k, v in h.events if k == "switch"]
+    pw = [[iso(t), str(v)] for t, k, v in h.events if k == "power"]
+    return {"entities": ["switch.x", "sensor.x_power"], "history": {"switch.x": sw, "sensor.x_power": pw}}
