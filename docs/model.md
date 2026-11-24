@@ -67,25 +67,28 @@ never fall.
 - **Off periods** (full tank → switch-off → reheat to full) are listed as a
   cross-check. They include any water used while off.
 
-## Reference numbers (Joven JSH35, 13–23 Nov 2026)
+## Reference numbers (Joven JSH35, 13–24 Nov 2026)
 
 | Quantity | Value |
 |---|---|
 | Element | 2.95 kW |
-| Thermostat band | 0.24 kWh, very consistent (15 cycles) |
-| Heat loss | 4 clean idle cycles: 51–60 W, 1.6–1.9 W/°C (at 65 °C, 30 °C room) |
+| Thermostat | 70 °C (hot tap measured 68 °C right after a full tank) |
+| Thermostat band | 0.24 kWh, very consistent |
+| Heat loss | clean idle cycles 51–61 W with the tank full: 1.5 W/°C at 70 °C and 30 °C room |
 | Off periods | 43–53 W average over 6–26 h (include evening washing while off) |
-| Shower draw | 5.3 kW at 9.5 L/min, 38 °C, 30 °C cold |
-| Timed shower check | user timed 12–13 min; model 12.7 min |
+| Shower | thermostatic mixer at 42.5 °C; heads 7.5 and 8.5 L/min; cold water 29.8–32.9 °C. Draw ≈ 5.3–6 kW |
+| Timed shower check | about 10.5 min of running water; model 10.6 min |
 
-The thermostat setting was hidden on this heater; the data bounds it to at least
-~62 °C.
+Two Rheem EHG 30 L units in the same home are set to 65 and 75 °C and lose 57 and
+42 W: heat loss depends on where a heater is installed, not only on its model.
 
 ## Calibrating
 
 1. **Thermostat setting**: when Hot Water Ready turns on, run the hot tap alone for
-   30 s and measure a cup with a kitchen thermometer.
-2. **Heat loss**: leave the heater on overnight (or while away) with no hot water
+   30 s and measure a cup with a kitchen thermometer. Add 1–2 °C.
+2. **Warm and cold water**: a cup at the shower at your usual setting, and one from
+   the cold tap after a minute.
+3. **Heat loss**: leave the heater on overnight (or while away) with no hot water
    used, then run `tools/analyze.py`.
-3. **Shower flow**: time how long a bucket of known size takes to fill at shower
+4. **Shower flow**: time how long a bucket of known size takes to fill at shower
    temperature. With two heads, average them.

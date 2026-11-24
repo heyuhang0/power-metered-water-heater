@@ -132,23 +132,25 @@ in automations, dashboards and HomeKit.
 | Thermostat setting | When Hot Water Ready turns on, run the hot tap alone for 30 s and measure a cup with a kitchen thermometer (reads 1–2 °C low) |
 | Thermostat band, heat loss | From recorded history: `tools/analyze.py` (below). For heat loss it uses idle cycles of at least 3 h with the switch on, skips the first small reheat after a big one or after a switch-on, and takes the 25th percentile. A night with the heater on and no hot water used gives the cleanest data |
 | Shower flow | Time how long a bucket of known size takes to fill at shower temperature |
-| Cold water temperature | Thermometer at the cold tap |
+| Cold water temperature | Thermometer at the cold tap after running it for a minute. It varies over the day (29.8–32.9 °C in the reference home); use the value at the time you use most hot water |
+| Warm water temperature | Thermometer in a cup at the shower, at your usual setting |
 
-Reference heater (Joven JSH35, 35 L, 3 kW element, Singapore):
+Reference heaters (Singapore, measured November 2026):
 
-| Setting | Value |
-|---|---|
-| Tank volume | 35 L |
-| Thermostat band | 0.24 kWh |
-| Heat loss | ≈ 1.6–1.8 W/°C (about 50–57 W with the tank full) |
-| Room / cold water / warm water | 30 / 30 / 38 °C |
-| Shower flow / shortest shower | 9.5 L/min / 6 min |
+| Setting | Joven JSH35 | Rheem EHG 30 L (2 units) |
+|---|---|---|
+| Tank volume | 35 L | 30 L |
+| Thermostat | 70 °C | 65 °C and 75 °C (set differently) |
+| Thermostat band | 0.24 kWh | 0.20–0.28 kWh |
+| Heat loss | 1.5 W/°C (about 55 W with the tank full) | 1.0–1.8 W/°C (42–57 W), depending on where it is installed |
+| Room / cold / warm water | 30 / 31 / 42.5 °C | 30 / 31 / 42.5 °C |
+| Shower flow / shortest shower | 8 L/min / 6 min | |
 
 ## Accuracy and limits
 
 - Litres depend on the cold and warm water temperatures; minutes also on the shower
   flow. Water energy itself is measured.
-- Draws smaller than one thermostat band (about 25 L at 38 °C on a 35 L tank) are only
+- Draws smaller than one thermostat band (about 18 L at 42.5 °C on a 35 L tank) are only
   seen when the next reheat ends. Totals stay right; timing is coarse.
 - Two showers within one reheat (about 30 min) count as one long shower.
 - Water used while the switch is off is booked when it is switched on and the tank is
@@ -179,9 +181,9 @@ For your own heater:
 
 ```bash
 python3 -I tools/fetch_history.py tests/fixtures/private/heater.json switch.x sensor.x_power   # HA_URL, HA_TOKEN
-python3 -I tools/analyze.py  tests/fixtures/private/heater.json --tank 35 --thermostat 65 --room 30
+python3 -I tools/analyze.py  tests/fixtures/private/heater.json --tank 35 --thermostat 70 --room 30
 python3 -I tools/backtest.py tests/fixtures/private/heater.json --tank 35 --thermostat 65 --band 0.24 \
-    --heat-loss 1.8 --room 30 --cold 30 --warm 38 --flow 9.5 --shortest 6
+    --heat-loss 1.5 --room 30 --cold 31 --warm 42.5 --flow 8 --shortest 6
 ```
 
 `tests/fixtures/private/` is gitignored: recorded history reveals your routine.
