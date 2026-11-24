@@ -151,6 +151,22 @@ async def test_water_heater_controls_switch_and_live_updates(recorder_mock, our_
 
 
 @pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
+async def test_state_is_saved_while_running(recorder_mock, our_integration, hass: HomeAssistant, freezer, hass_storage) -> None:
+    await _plug(hass)
+    await _record_week(hass, freezer)
+    entry = await _setup(hass)
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage.pop(key, None)
+    now = dt_util.utcnow()
+    for minute in range(1, 8):                    # the 1-minute tick must not keep postponing the save
+        freezer.move_to(now + dt.timedelta(minutes=minute))
+        async_fire_time_changed(hass, now + dt.timedelta(minutes=minute))
+        await hass.async_block_till_done()
+    assert key in hass_storage
+    assert hass_storage[key]["data"]["model"]["totals"]
+
+
+@pytest.mark.parametrize("recorder_config", [{"commit_interval": 0}])
 async def test_configure_changes_settings_and_can_turn_showers_off(recorder_mock, our_integration, hass: HomeAssistant, freezer) -> None:
     await _plug(hass)
     await _record_week(hass, freezer)

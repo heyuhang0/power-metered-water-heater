@@ -96,6 +96,7 @@ class HeaterRuntime:
         self._listeners: list[CALLBACK_TYPE] = []
         self._shower_listeners: list[Callable[[float, float, float], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
+        self._save_pending = False
         self._buffer: list[tuple[float, str, Any]] | None = []
         self._snapshots: list[tuple[float, dict[str, float]]] = []
         self.first_setup = False
@@ -262,11 +263,16 @@ class HeaterRuntime:
             cb()
 
     def _data(self) -> dict[str, Any]:
+        self._save_pending = False
         return {"model": self.model.to_dict(), "stats_imported": self.stats_imported}
 
     @callback
     def _schedule_save(self) -> None:
-        self._store.async_delay_save(self._data, SAVE_DELAY_S)
+        # async_delay_save restarts its timer on every call, and the tick calls this every
+        # minute: only schedule when no save is pending, or it never fires.
+        if not self._save_pending:
+            self._save_pending = True
+            self._store.async_delay_save(self._data, SAVE_DELAY_S)
 
     @property
     def switch_available(self) -> bool:
