@@ -47,6 +47,7 @@ never fall.
 
 | Case | Handling |
 |---|---|
+| Reheat stopped before the switch was turned off (within the 30 s wait) | The thermostat stopped it: a full tank, like any anchor. A drop the switch causes is always reported after the switch state |
 | Switch turned off during a reheat | Water this reheat proves is booked at once. If it is less than a shower so far, it is held and classified with the rest at the next full tank (only this held amount is missing from the parts until then). The rest of a cut-short shower (up to 12 min in total) is added to that shower at the next full tank |
 | First small reheat within 4 h of a big one | The tank was not fully mixed: after a reheat from cold, heat loss; after a shower, the heat above the modelled loss belongs to that shower |
 | Water used while switched off | Found in the first reheat after switch-on; classified like any other water |

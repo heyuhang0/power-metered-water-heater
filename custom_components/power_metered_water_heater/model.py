@@ -154,6 +154,10 @@ class HeaterModel:
         self.advance(t)
         if on == self.switch_on:
             return
+        if not on and self._end_pending is not None:
+            # the reheat had already stopped when the switch went off (a drop the switch
+            # causes is always reported after it): the thermostat stopped it, tank full
+            self._finish_burst(self._end_pending, anchor=True)
         self.switch_on = on
         if on:
             self.on_since = t

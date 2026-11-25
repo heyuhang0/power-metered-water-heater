@@ -94,6 +94,19 @@ def test_showers_off_counts_one_total(synthetic):
         assert all(y >= x - 1e-9 for x, y in zip(a, b))
 
 
+def test_thermostat_stop_just_before_a_switch_off_is_a_full_tank():
+    """The reheat stopped 9 s before an automation turned the switch off: tank full, water booked."""
+    m = HeaterModel(settings=Settings(35, 70, 0.24, 1.5, 30, 31, 39.5, 8, 6))
+    t1 = 4.5 * 3600
+    drop = t1 + 600
+    replay(m, [(0, "switch", True), (0, "power", 0), (3000, "power", 2950), (3300, "power", 0),
+               (t1, "power", 2950), (drop, "power", 20), (drop + 9.4, "switch", False)],
+           until=drop + 120)
+    assert m.deficit == pytest.approx(0.0, abs=0.01)
+    assert m.totals.water_kwh > 0.2
+    assert m.totals.water_kwh + m.totals.loss_kwh == pytest.approx(m.totals.energy_kwh, abs=1e-6)
+
+
 def test_ready_after_reheat():
     h = week()
     m = HeaterModel(settings=true_settings(h))
